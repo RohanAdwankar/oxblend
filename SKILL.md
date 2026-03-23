@@ -23,6 +23,7 @@ The current supported object commands are:
 - `sphere`
 - `cube`
 - `cylinder`
+- `capsule`
 - `cone`
 - `torus`
 - `extrude`
@@ -38,6 +39,7 @@ The current supported scene commands are:
 - `difference`
 - `intersection`
 - `repeat`
+- `mirror`
 
 ## Basic Syntax
 
@@ -134,6 +136,28 @@ Best practice:
 - Prefer nested `repeat` blocks over long flat lists of repeated objects.
 - Use explicit `positions=` only when spacing is irregular.
 
+## Mirror Syntax
+
+Use `mirror` for bilateral anatomy and any left/right duplication that should stay symmetric.
+
+```oxb
+mirror side axis=x {
+  capsule leg radius=0.22 depth=2.4 at=0.9,0,1.2 rotate=0,8,0
+  sphere paw radius=0.18 at=0.9,0.2,0.0 scale=1.2,1.5,0.7
+}
+```
+
+This expands to two copies:
+
+- a positive-side copy with names prefixed like `side_pos__...`
+- a mirrored negative-side copy with names prefixed like `side_neg__...`
+
+Best practice:
+
+- Define only one anatomical side inside the block.
+- Use `axis=x` for left/right symmetry in the default coordinate system.
+- Keep centerline masses like torso, spine, neck, and head outside the `mirror` block.
+
 ## Generated Shapes
 
 Extrude:
@@ -171,6 +195,7 @@ The parser qualifies repeated names automatically.
 - Add repetition next: rows, columns, bays, aisles, towers, seats.
 - Use booleans for subtractive design only when needed.
 - Prefer `cube` plus transforms for architectural layouts and low-detail blockouts.
+- Prefer `capsule`, `sphere`, and `mirror` for animals, limbs, tails, and other organic silhouettes.
 - For readability, separate large structural regions with blank lines and comments.
 
 For complex scenes:

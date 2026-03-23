@@ -21,6 +21,7 @@ struct SceneParser {
 struct ParserContext {
     prefix: String,
     offset: Vec3,
+    mirror: Option<MirrorAxis>,
 }
 
 impl ParserContext {
@@ -37,6 +38,15 @@ impl ParserContext {
         Self {
             prefix: format!("{}{}", self.prefix, prefix_fragment),
             offset: add_vec3(self.offset, offset),
+            mirror: self.mirror,
+        }
+    }
+
+    fn mirrored_child(&self, prefix_fragment: &str, axis: MirrorAxis) -> Self {
+        Self {
+            prefix: format!("{}{}", self.prefix, prefix_fragment),
+            offset: mirror_vec3(self.offset, axis),
+            mirror: Some(axis),
         }
     }
 }
@@ -46,6 +56,7 @@ impl Default for ParserContext {
         Self {
             prefix: String::new(),
             offset: Vec3::ZERO,
+            mirror: None,
         }
     }
 }
@@ -53,6 +64,18 @@ impl Default for ParserContext {
 struct RepeatSpec {
     name: String,
     offsets: Vec<Vec3>,
+}
+
+#[derive(Clone, Copy)]
+enum MirrorAxis {
+    X,
+    Y,
+    Z,
+}
+
+struct MirrorSpec {
+    name: String,
+    axis: MirrorAxis,
 }
 
 impl SceneParser {
@@ -130,6 +153,17 @@ impl SceneParser {
                             self.parse_block(body, &mut nested_index, scene, &child_ctx)?;
                         }
                     }
+                    "mirror" => {
+                        let mirror = parse_mirror_header(line_no, &header_tokens)?;
+                        let contexts = [
+                            ctx.child(&format!("{}_pos__", mirror.name), Vec3::ZERO),
+                            ctx.mirrored_child(&format!("{}_neg__", mirror.name), mirror.axis),
+                        ];
+                        for child_ctx in contexts {
+                            let mut nested_index = 0usize;
+                            self.parse_block(body, &mut nested_index, scene, &child_ctx)?;
+                        }
+                    }
                     other => bail!("line {}: unsupported block '{}'", line_no, other),
                 }
 
@@ -143,8 +177,8 @@ impl SceneParser {
             }
 
             match tokens[0].as_str() {
-                "sphere" | "cube" | "cylinder" | "cone" | "torus" | "extrude" | "revolve"
-                | "sweep" => scene.objects.push(self.parse_object(line_no, &tokens, ctx)?),
+                "sphere" | "cube" | "cylinder" | "capsule" | "cone" | "torus" | "extrude"
+                | "revolve" | "sweep" => scene.objects.push(self.parse_object(line_no, &tokens, ctx)?),
                 "group" => scene.groups.push(parse_group_inline(line_no, &tokens, ctx)?),
                 "transform" => scene.transforms.push(parse_transform_inline(line_no, &tokens, ctx)?),
                 "apply" => scene.applies.push(parse_apply(line_no, &tokens, ctx)?),
@@ -190,6 +224,11 @@ impl SceneParser {
                 let radius = parse_required_scalar(command, "radius", &positional, &attrs, 0)?;
                 let depth = parse_required_scalar(command, "depth", &positional, &attrs, 1)?;
                 (ObjectKind::Cylinder { radius, depth }, 2usize)
+            }
+            "capsule" => {
+                let radius = parse_required_scalar(command, "radius", &positional, &attrs, 0)?;
+                let depth = parse_required_scalar(command, "depth", &positional, &attrs, 1)?;
+                (ObjectKind::Capsule { radius, depth }, 2usize)
             }
             "cone" => {
                 let radius = parse_required_scalar(command, "radius", &positional, &attrs, 0)?;
@@ -250,6 +289,9 @@ impl SceneParser {
         };
         let mut transform = parse_transform_attrs(&attrs, remaining)?;
         transform.translation = add_vec3(transform.translation, ctx.offset);
+        if let Some(axis) = ctx.mirror {
+            transform = mirror_transform(transform, axis);
+        }
 
         Ok(ObjectSpec {
             name,
@@ -323,7 +365,9 @@ where
         name = Some(attr_name);
     } else if let Some(first) = positional.first() {
         let treat_as_name = match command {
-            "sphere" | "cube" | "cylinder" | "cone" | "torus" => parse_f64(first).is_err(),
+            "sphere" | "cube" | "cylinder" | "capsule" | "cone" | "torus" => {
+                parse_f64(first).is_err()
+            }
             "extrude" | "revolve" | "sweep" => !first.contains(';') && parse_f64(first).is_err(),
             _ => false,
         };
@@ -379,6 +423,21 @@ fn parse_repeat_header(line_no: usize, tokens: &[String]) -> Result<RepeatSpec> 
     Ok(RepeatSpec { name, offsets })
 }
 
+fn parse_mirror_header(line_no: usize, tokens: &[String]) -> Result<MirrorSpec> {
+    if tokens.len() < 2 {
+        bail!("line {}: expected 'mirror <name> axis=<x|y|z> {{'", line_no);
+    }
+    let attrs = parse_attrs(&tokens[2..]);
+    let axis = attrs
+        .get("axis")
+        .ok_or_else(|| anyhow!("line {}: mirror requires axis=<x|y|z>", line_no))
+        .and_then(|value| parse_mirror_axis(value))?;
+    Ok(MirrorSpec {
+        name: tokens[1].clone(),
+        axis,
+    })
+}
+
 fn parse_group_inline(line_no: usize, tokens: &[String], ctx: &ParserContext) -> Result<GroupSpec> {
     if tokens.len() < 2 {
         bail!("line {}: expected 'group <name> ...'", line_no);
@@ -390,6 +449,9 @@ fn parse_group_inline(line_no: usize, tokens: &[String], ctx: &ParserContext) ->
         .collect();
     let mut transform = parse_transform_attrs(&attrs, &[])?;
     transform.translation = add_vec3(transform.translation, ctx.offset);
+    if let Some(axis) = ctx.mirror {
+        transform = mirror_transform(transform, axis);
+    }
     Ok(GroupSpec {
         name: ctx.qualify(&tokens[1]),
         children,
@@ -405,6 +467,9 @@ fn parse_group_block(name: &str, lines: &[&str], ctx: &ParserContext) -> Result<
         .collect();
     let mut transform = parse_transform_attrs(&attrs, &[])?;
     transform.translation = add_vec3(transform.translation, ctx.offset);
+    if let Some(axis) = ctx.mirror {
+        transform = mirror_transform(transform, axis);
+    }
     Ok(GroupSpec {
         name: name.to_string(),
         children,
@@ -423,6 +488,9 @@ fn parse_transform_inline(
     let attrs = parse_attrs(&tokens[2..]);
     let mut transform = parse_transform_attrs(&attrs, &[])?;
     transform.translation = add_vec3(transform.translation, ctx.offset);
+    if let Some(axis) = ctx.mirror {
+        transform = mirror_transform(transform, axis);
+    }
     Ok(NamedTransform {
         name: ctx.qualify(&tokens[1]),
         transform,
@@ -433,6 +501,9 @@ fn parse_transform_block(name: &str, lines: &[&str], ctx: &ParserContext) -> Res
     let attrs = collect_block_attrs(lines)?;
     let mut transform = parse_transform_attrs(&attrs, &[])?;
     transform.translation = add_vec3(transform.translation, ctx.offset);
+    if let Some(axis) = ctx.mirror {
+        transform = mirror_transform(transform, axis);
+    }
     Ok(NamedTransform {
         name: name.to_string(),
         transform,
@@ -490,6 +561,9 @@ fn parse_boolean(line_no: usize, tokens: &[String], ctx: &ParserContext) -> Resu
 
     let mut transform = parse_transform_attrs(&attrs, &[])?;
     transform.translation = add_vec3(transform.translation, ctx.offset);
+    if let Some(axis) = ctx.mirror {
+        transform = mirror_transform(transform, axis);
+    }
 
     Ok(BooleanSpec {
         name,
@@ -676,6 +750,15 @@ fn parse_axis(value: &str) -> Result<Axis> {
     }
 }
 
+fn parse_mirror_axis(value: &str) -> Result<MirrorAxis> {
+    match value.to_ascii_lowercase().as_str() {
+        "x" => Ok(MirrorAxis::X),
+        "y" => Ok(MirrorAxis::Y),
+        "z" => Ok(MirrorAxis::Z),
+        _ => bail!("invalid mirror axis '{}'", value),
+    }
+}
+
 fn parse_csv(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -808,6 +891,75 @@ fn mul_vec3(vector: Vec3, scalar: f64) -> Vec3 {
     Vec3(vector.0 * scalar, vector.1 * scalar, vector.2 * scalar)
 }
 
+fn mirror_vec3(vector: Vec3, axis: MirrorAxis) -> Vec3 {
+    match axis {
+        MirrorAxis::X => Vec3(-vector.0, vector.1, vector.2),
+        MirrorAxis::Y => Vec3(vector.0, -vector.1, vector.2),
+        MirrorAxis::Z => Vec3(vector.0, vector.1, -vector.2),
+    }
+}
+
+fn mirror_transform(transform: Transform, axis: MirrorAxis) -> Transform {
+    let rotation = mirror_rotation(transform.rotation_degrees, axis);
+    let scale = match axis {
+        MirrorAxis::X => Vec3(-transform.scale.0, transform.scale.1, transform.scale.2),
+        MirrorAxis::Y => Vec3(transform.scale.0, -transform.scale.1, transform.scale.2),
+        MirrorAxis::Z => Vec3(transform.scale.0, transform.scale.1, -transform.scale.2),
+    };
+    Transform {
+        translation: mirror_vec3(transform.translation, axis),
+        rotation_degrees: rotation,
+        scale,
+        color: transform.color,
+    }
+}
+
+fn mirror_rotation(rotation_degrees: Vec3, axis: MirrorAxis) -> Vec3 {
+    let matrix = rotation_matrix(rotation_degrees);
+    let reflected = match axis {
+        MirrorAxis::X => mirror_matrix(matrix, [-1.0, 1.0, 1.0]),
+        MirrorAxis::Y => mirror_matrix(matrix, [1.0, -1.0, 1.0]),
+        MirrorAxis::Z => mirror_matrix(matrix, [1.0, 1.0, -1.0]),
+    };
+    euler_from_matrix(reflected)
+}
+
+fn rotation_matrix(rotation_degrees: Vec3) -> [[f64; 3]; 3] {
+    let (sx, cx) = rotation_degrees.0.to_radians().sin_cos();
+    let (sy, cy) = rotation_degrees.1.to_radians().sin_cos();
+    let (sz, cz) = rotation_degrees.2.to_radians().sin_cos();
+    [
+        [cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
+        [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
+        [-sy, cy * sx, cy * cx],
+    ]
+}
+
+fn mirror_matrix(matrix: [[f64; 3]; 3], signs: [f64; 3]) -> [[f64; 3]; 3] {
+    let mut result = [[0.0; 3]; 3];
+    for row in 0..3 {
+        for col in 0..3 {
+            result[row][col] = signs[row] * matrix[row][col] * signs[col];
+        }
+    }
+    result
+}
+
+fn euler_from_matrix(matrix: [[f64; 3]; 3]) -> Vec3 {
+    let sy = -matrix[2][0];
+    let y = sy.clamp(-1.0, 1.0).asin();
+    let cy = y.cos();
+    let (x, z) = if cy.abs() > 1e-8 {
+        (
+            matrix[2][1].atan2(matrix[2][2]),
+            matrix[1][0].atan2(matrix[0][0]),
+        )
+    } else {
+        (0.0, (-matrix[0][1]).atan2(matrix[1][1]))
+    };
+    Vec3(x.to_degrees(), y.to_degrees(), z.to_degrees())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -868,6 +1020,32 @@ mod tests {
             .objects
             .iter()
             .any(|object| object.transform.translation == Vec3(4.0, 4.0, 2.0)));
+    }
+
+    #[test]
+    fn parses_capsule_and_mirror_blocks() {
+        let source = r#"
+            mirror side axis=x {
+              capsule leg radius=0.2 depth=2 at=1,0,1 rotate=5,10,0
+            }
+        "#;
+        let scene = parse_scene(source).unwrap();
+        scene.validate().unwrap();
+        assert_eq!(scene.objects.len(), 2);
+        assert!(scene.objects.iter().any(|object| object.name == "side_pos__leg"));
+        assert!(scene.objects.iter().any(|object| object.name == "side_neg__leg"));
+        assert!(scene
+            .objects
+            .iter()
+            .any(|object| object.transform.translation == Vec3(1.0, 0.0, 1.0)));
+        assert!(scene
+            .objects
+            .iter()
+            .any(|object| object.transform.translation == Vec3(-1.0, 0.0, 1.0)));
+        assert!(scene
+            .objects
+            .iter()
+            .all(|object| matches!(object.kind, ObjectKind::Capsule { .. })));
     }
 
     #[test]

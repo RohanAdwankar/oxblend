@@ -72,6 +72,7 @@ Supported v1 commands:
 - `sphere`
 - `cube`
 - `cylinder`
+- `capsule`
 - `cone`
 - `torus`
 - `extrude`
@@ -84,6 +85,7 @@ Supported v1 commands:
 - `difference`
 - `intersection`
 - `repeat`
+- `mirror`
 
 ## How It Works
 

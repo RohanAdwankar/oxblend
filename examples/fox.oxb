@@ -1,0 +1,37 @@
+# Stylized fox using mirrored anatomy and capsule-based limbs.
+
+sphere chest radius=1.35 at=0,0.20,2.60 scale=1.15,1.35,1.00 color=#c96a24
+sphere hips radius=1.20 at=0,-1.40,2.40 scale=1.20,1.45,1.00 color=#b95b1b
+capsule spine radius=0.95 depth=3.20 at=0,-0.55,2.50 rotate=-90,0,0 scale=1.00,1.00,1.08 color=#c76320
+sphere bib radius=0.58 at=0,1.10,2.35 scale=0.70,1.20,1.15 color=#f6f1ea
+
+sphere neck radius=0.62 at=0,1.45,2.95 scale=0.90,1.00,1.25 color=#d36d24
+sphere head radius=0.95 at=0,2.65,3.15 scale=0.92,1.15,0.92 color=#d97726
+sphere muzzle radius=0.55 at=0,3.55,2.90 scale=0.75,1.15,0.70 color=#f1e7dc
+sphere chin radius=0.30 at=0,3.42,2.45 scale=0.70,1.00,0.55 color=#f7f2ea
+sphere nose radius=0.18 at=0,4.08,2.86 scale=1.20,1.00,0.85 color=#111111
+
+mirror ear axis=x {
+  cone outer radius=0.34 depth=0.95 at=0.45,2.42,4.05 rotate=14,-8,10 scale=0.90,0.80,1.00 color=#cf7126
+  cone inner radius=0.18 depth=0.60 at=0.45,2.50,3.95 rotate=14,-8,10 scale=0.80,0.70,1.00 color=#f5d8c4
+}
+
+mirror face axis=x {
+  sphere eye radius=0.09 at=0.26,3.35,3.18 color=#101010
+  sphere cheek radius=0.28 at=0.50,3.22,2.78 scale=0.80,1.00,0.70 color=#f5eee5
+}
+
+mirror front axis=x {
+  capsule upper radius=0.22 depth=1.50 at=0.78,0.65,1.60 rotate=12,8,0 color=#c86a24
+  capsule lower radius=0.17 depth=1.45 at=0.78,0.78,0.62 rotate=3,2,0 color=#f5eee5
+  sphere paw radius=0.18 at=0.78,0.86,-0.02 scale=1.20,1.60,0.75 color=#f5eee5
+}
+
+mirror rear axis=x {
+  capsule thigh radius=0.28 depth=1.45 at=0.92,-1.55,1.95 rotate=-28,-8,0 color=#bb5c1c
+  capsule shin radius=0.18 depth=1.55 at=0.88,-1.02,0.68 rotate=18,6,0 color=#f5eee5
+  sphere paw radius=0.20 at=0.90,-0.72,-0.02 scale=1.25,1.55,0.75 color=#f5eee5
+}
+
+sweep tail_base profile=0,0.26;0.15,0.20;0.21,0;0.15,-0.20;0,-0.26;-0.15,-0.20;-0.21,0;-0.15,0.20 path=0,-2.10,2.55;0.12,-3.00,2.90;0.34,-3.95,3.30;0.58,-4.82,3.66 color=#d67023
+sweep tail_tip profile=0,0.18;0.10,0.14;0.14,0;0.10,-0.14;0,-0.18;-0.10,-0.14;-0.14,0;-0.10,0.14 path=0.58,-4.82,3.66;0.72,-5.32,3.86;0.82,-5.92,4.03 color=#f7f2ea

@@ -157,6 +157,7 @@ pub enum ObjectKind {
     Sphere { radius: f64 },
     Cube { size: f64 },
     Cylinder { radius: f64, depth: f64 },
+    Capsule { radius: f64, depth: f64 },
     Cone { radius: f64, depth: f64 },
     Torus { major_radius: f64, minor_radius: f64 },
     Extrude { profile: Vec<Vec2>, depth: f64 },

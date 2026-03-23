@@ -72,6 +72,8 @@ def build_primitive(obj_spec):
         bpy.ops.mesh.primitive_cube_add(size=kind["size"])
     elif kind_type == "cylinder":
         bpy.ops.mesh.primitive_cylinder_add(radius=kind["radius"], depth=kind["depth"])
+    elif kind_type == "capsule":
+        create_capsule(obj_spec["name"], kind["radius"], kind["depth"])
     elif kind_type == "cone":
         bpy.ops.mesh.primitive_cone_add(
             radius1=kind["radius"], radius2=0.0, depth=kind["depth"]
@@ -116,6 +118,27 @@ def create_extrusion(name, profile, depth):
     bmesh.ops.translate(bm, verts=extruded_verts, vec=Vector((0.0, 0.0, depth)))
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     create_mesh_object(name, bm)
+
+
+def create_capsule(name, radius, depth):
+    body_depth = max(depth - radius * 2.0, 0.0)
+    pieces = []
+
+    if body_depth > 1e-6:
+        bpy.ops.mesh.primitive_cylinder_add(radius=radius, depth=body_depth)
+        pieces.append(bpy.context.active_object)
+
+    offset = max(depth * 0.5 - radius, 0.0)
+    for z in (offset, -offset):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=(0.0, 0.0, z))
+        pieces.append(bpy.context.active_object)
+
+    bpy.ops.object.select_all(action="DESELECT")
+    for piece in pieces:
+        piece.select_set(True)
+    bpy.context.view_layer.objects.active = pieces[0]
+    bpy.ops.object.join()
+    bpy.context.active_object.name = name
 
 
 def create_revolve(name, profile, axis, angle_degrees):
@@ -171,7 +194,7 @@ def create_sweep(name, profile, path):
     path_obj = create_poly_curve(f"{name}_path", path, "3D")
     profile_closed = profile + [profile[0]]
     profile_obj = create_poly_curve(f"{name}_profile", profile_closed, "2D")
-    profile_obj.data.fill_mode = "FULL"
+    profile_obj.data.fill_mode = "BOTH"
     path_obj.data.bevel_mode = "OBJECT"
     path_obj.data.bevel_object = profile_obj
     bpy.context.view_layer.objects.active = path_obj

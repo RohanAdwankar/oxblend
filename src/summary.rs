@@ -253,7 +253,9 @@ fn local_bounds_for_kind(kind: &ObjectKind) -> Bounds {
                 max: Vec3(half, half, half),
             }
         }
-        ObjectKind::Cylinder { radius, depth } | ObjectKind::Cone { radius, depth } => Bounds {
+        ObjectKind::Cylinder { radius, depth }
+        | ObjectKind::Capsule { radius, depth }
+        | ObjectKind::Cone { radius, depth } => Bounds {
             min: Vec3(-radius, -radius, -depth * 0.5),
             max: Vec3(*radius, *radius, *depth * 0.5),
         },
@@ -466,6 +468,7 @@ fn object_kind_name(kind: &ObjectKind) -> &'static str {
         ObjectKind::Sphere { .. } => "sphere",
         ObjectKind::Cube { .. } => "cube",
         ObjectKind::Cylinder { .. } => "cylinder",
+        ObjectKind::Capsule { .. } => "capsule",
         ObjectKind::Cone { .. } => "cone",
         ObjectKind::Torus { .. } => "torus",
         ObjectKind::Extrude { .. } => "extrude",
@@ -479,6 +482,9 @@ fn object_detail(kind: &ObjectKind) -> String {
         ObjectKind::Sphere { radius } => format!("radius={radius:.6}"),
         ObjectKind::Cube { size } => format!("size={size:.6}"),
         ObjectKind::Cylinder { radius, depth } => {
+            format!("radius={radius:.6} depth={depth:.6}")
+        }
+        ObjectKind::Capsule { radius, depth } => {
             format!("radius={radius:.6} depth={depth:.6}")
         }
         ObjectKind::Cone { radius, depth } => format!("radius={radius:.6} depth={depth:.6}"),
