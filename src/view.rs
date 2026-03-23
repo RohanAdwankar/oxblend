@@ -9,13 +9,13 @@ use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use tokio::net::TcpListener;
 
-use crate::bridge::run_blender_export;
+use crate::bridge::{launch_blender_preview, run_blender_export};
 use crate::parser::parse_scene;
 use crate::scene::OutputFormat;
 
@@ -86,6 +86,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
       color: var(--text);
       background: rgba(255,255,255,0.72);
       transition: background 140ms ease, transform 140ms ease;
+      font: inherit;
+      cursor: pointer;
     }
     .download-link:hover {
       background: #ffffff;
@@ -152,6 +154,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
         <span>Preview</span>
         <div class="header-actions">
           <a id="downloadLink" class="download-link" href="/model.glb" download="preview.glb">Download 3D</a>
+          <button id="openBlenderButton" class="download-link" type="button">Open in Blender</button>
           <span id="renderVersion">render 0</span>
         </div>
       </div>
@@ -176,6 +179,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
     const renderVersion = document.getElementById("renderVersion");
     const saveText = document.getElementById("saveText");
     const downloadLink = document.getElementById("downloadLink");
+    const openBlenderButton = document.getElementById("openBlenderButton");
     let lastRenderVersion = -1;
     let lastSourceVersion = -1;
     let saveTimer = null;
@@ -218,6 +222,24 @@ const INDEX_HTML: &str = r#"<!doctype html>
       saveTimer = setTimeout(saveSource, 350);
     });
 
+    openBlenderButton.addEventListener("click", async () => {
+      const original = openBlenderButton.textContent;
+      openBlenderButton.textContent = "Opening...";
+      openBlenderButton.disabled = true;
+      try {
+        const response = await fetch("/api/open-in-blender", { method: "POST" });
+        const payload = await response.json();
+        statusText.textContent = payload.message;
+        statusDot.className = `dot ${payload.status}`;
+      } catch (error) {
+        statusText.textContent = `Failed to launch Blender: ${error}`;
+        statusDot.className = "dot error";
+      } finally {
+        openBlenderButton.textContent = original;
+        openBlenderButton.disabled = false;
+      }
+    });
+
     async function pollState() {
       try {
         const response = await fetch("/api/state");
@@ -253,6 +275,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
 struct AppState {
     source_path: PathBuf,
     model_path: PathBuf,
+    blender_bin: Option<PathBuf>,
     state: Arc<Mutex<ViewerState>>,
     trigger: mpsc::Sender<()>,
     source_cache: Arc<Mutex<String>>,
@@ -307,6 +330,7 @@ pub async fn run_viewer(input: PathBuf, blender_bin: Option<PathBuf>) -> Result<
     let app_state = AppState {
         source_path: input.clone(),
         model_path,
+        blender_bin,
         state,
         trigger: tx,
         source_cache,
@@ -316,6 +340,7 @@ pub async fn run_viewer(input: PathBuf, blender_bin: Option<PathBuf>) -> Result<
         .route("/", get(index))
         .route("/api/state", get(get_state))
         .route("/api/source", get(get_source).post(update_source))
+        .route("/api/open-in-blender", post(open_in_blender))
         .route("/model.glb", get(get_model))
         .with_state(app_state);
 
@@ -488,6 +513,27 @@ async fn get_model(State(state): State<AppState>) -> Response {
         )
             .into_response(),
         Err(_) => (StatusCode::NOT_FOUND, "preview not available yet").into_response(),
+    }
+}
+
+async fn open_in_blender(State(state): State<AppState>) -> impl IntoResponse {
+    match launch_blender_preview(&state.model_path, state.blender_bin.as_deref()) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "status": "ready",
+                "message": "Opened the current preview in Blender."
+            })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": error.to_string()
+            })),
+        )
+            .into_response(),
     }
 }
 

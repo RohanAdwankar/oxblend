@@ -4,8 +4,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use shlex::split as shlex_split;
 
 use crate::scene::{
-    ApplySpec, Axis, BooleanOp, BooleanSpec, Color, GroupSpec, NamedTransform, ObjectKind,
-    ObjectSpec, Scene, Transform, Vec2, Vec3,
+    ApplySpec, Axis, BooleanOp, BooleanSpec, Color, ConstraintSpec, GroupSpec, LoftSection,
+    NamedTransform, ObjectKind, ObjectSpec, Scene, Transform, Vec2, Vec3,
 };
 
 pub fn parse_scene(source: &str) -> Result<Scene> {
@@ -177,11 +177,18 @@ impl SceneParser {
             }
 
             match tokens[0].as_str() {
-                "sphere" | "cube" | "cylinder" | "capsule" | "cone" | "torus" | "extrude"
-                | "revolve" | "sweep" => scene.objects.push(self.parse_object(line_no, &tokens, ctx)?),
+                "sphere" | "cube" | "cylinder" | "capsule" | "skin" | "cone" | "torus"
+                | "extrude" | "loft" | "revolve" | "sweep" => {
+                    scene.objects.push(self.parse_object(line_no, &tokens, ctx)?)
+                }
                 "group" => scene.groups.push(parse_group_inline(line_no, &tokens, ctx)?),
                 "transform" => scene.transforms.push(parse_transform_inline(line_no, &tokens, ctx)?),
                 "apply" => scene.applies.push(parse_apply(line_no, &tokens, ctx)?),
+                "expect_attach" => scene.constraints.push(parse_expect_attach(line_no, &tokens, ctx)?),
+                "expect_intersect" => {
+                    scene.constraints.push(parse_expect_intersect(line_no, &tokens, ctx)?)
+                }
+                "expect_ground" => scene.constraints.push(parse_expect_ground(line_no, &tokens, ctx)?),
                 "union" | "difference" | "intersection" => {
                     scene.booleans.push(parse_boolean(line_no, &tokens, ctx)?)
                 }
@@ -230,6 +237,25 @@ impl SceneParser {
                 let depth = parse_required_scalar(command, "depth", &positional, &attrs, 1)?;
                 (ObjectKind::Capsule { radius, depth }, 2usize)
             }
+            "skin" => {
+                let path = parse_required_profile3(command, "path", &attrs)?;
+                let radii = parse_required_scalar_list(command, "radii", &attrs)?;
+                if path.len() != radii.len() {
+                    bail!(
+                        "line {}: skin requires path and radii to have the same number of points",
+                        line_no
+                    );
+                }
+                let sides = attrs
+                    .get("sides")
+                    .map(|value| parse_usize(value))
+                    .transpose()?
+                    .unwrap_or(12);
+                if sides < 3 {
+                    bail!("line {}: skin sides must be at least 3", line_no);
+                }
+                (ObjectKind::Skin { path, radii, sides }, 0usize)
+            }
             "cone" => {
                 let radius = parse_required_scalar(command, "radius", &positional, &attrs, 0)?;
                 let depth = parse_required_scalar(command, "depth", &positional, &attrs, 1)?;
@@ -252,6 +278,10 @@ impl SceneParser {
                 let profile = parse_required_profile2(command, "profile", &attrs)?;
                 let depth = parse_required_scalar(command, "depth", &positional, &attrs, 0)?;
                 (ObjectKind::Extrude { profile, depth }, 1usize)
+            }
+            "loft" => {
+                let sections = parse_required_loft_sections(command, "sections", &attrs)?;
+                (ObjectKind::Loft { sections }, 0usize)
             }
             "revolve" => {
                 let profile = parse_required_profile2(command, "profile", &attrs)?;
@@ -365,10 +395,12 @@ where
         name = Some(attr_name);
     } else if let Some(first) = positional.first() {
         let treat_as_name = match command {
-            "sphere" | "cube" | "cylinder" | "capsule" | "cone" | "torus" => {
+            "sphere" | "cube" | "cylinder" | "capsule" | "skin" | "cone" | "torus" => {
                 parse_f64(first).is_err()
             }
-            "extrude" | "revolve" | "sweep" => !first.contains(';') && parse_f64(first).is_err(),
+            "extrude" | "loft" | "revolve" | "sweep" => {
+                !first.contains(';') && !first.contains('|') && parse_f64(first).is_err()
+            }
             _ => false,
         };
         if treat_as_name {
@@ -526,6 +558,55 @@ fn parse_apply(line_no: usize, tokens: &[String], ctx: &ParserContext) -> Result
         transform: ctx.qualify(&tokens[1]),
         targets: targets.into_iter().map(|target| ctx.qualify(target)).collect(),
     })
+}
+
+fn parse_expect_attach(
+    line_no: usize,
+    tokens: &[String],
+    ctx: &ParserContext,
+) -> Result<ConstraintSpec> {
+    if tokens.len() < 3 {
+        bail!("line {}: expected 'expect_attach <left> <right>'", line_no);
+    }
+    Ok(ConstraintSpec::Attach {
+        left: resolve_constraint_target(ctx, &tokens[1]),
+        right: resolve_constraint_target(ctx, &tokens[2]),
+    })
+}
+
+fn parse_expect_ground(
+    line_no: usize,
+    tokens: &[String],
+    ctx: &ParserContext,
+) -> Result<ConstraintSpec> {
+    if tokens.len() < 2 {
+        bail!("line {}: expected 'expect_ground <target>'", line_no);
+    }
+    Ok(ConstraintSpec::Ground {
+        target: resolve_constraint_target(ctx, &tokens[1]),
+    })
+}
+
+fn parse_expect_intersect(
+    line_no: usize,
+    tokens: &[String],
+    ctx: &ParserContext,
+) -> Result<ConstraintSpec> {
+    if tokens.len() < 3 {
+        bail!("line {}: expected 'expect_intersect <left> <right>'", line_no);
+    }
+    Ok(ConstraintSpec::Intersect {
+        left: resolve_constraint_target(ctx, &tokens[1]),
+        right: resolve_constraint_target(ctx, &tokens[2]),
+    })
+}
+
+fn resolve_constraint_target(ctx: &ParserContext, value: &str) -> String {
+    if let Some(global) = value.strip_prefix('@') {
+        global.to_string()
+    } else {
+        ctx.qualify(value)
+    }
 }
 
 fn parse_boolean(line_no: usize, tokens: &[String], ctx: &ParserContext) -> Result<BooleanSpec> {
@@ -700,6 +781,30 @@ fn parse_required_profile3(
         .ok_or_else(|| anyhow!("{} requires {}=<x,y,z;...>", command, attr_name))
 }
 
+fn parse_required_loft_sections(
+    command: &str,
+    attr_name: &str,
+    attrs: &HashMap<String, String>,
+) -> Result<Vec<LoftSection>> {
+    attrs
+        .get(attr_name)
+        .map(|value| parse_loft_sections(value))
+        .transpose()?
+        .ok_or_else(|| anyhow!("{} requires {}=<z:profile|...>", command, attr_name))
+}
+
+fn parse_required_scalar_list(
+    command: &str,
+    attr_name: &str,
+    attrs: &HashMap<String, String>,
+) -> Result<Vec<f64>> {
+    attrs
+        .get(attr_name)
+        .map(|value| parse_scalar_list(value))
+        .transpose()?
+        .ok_or_else(|| anyhow!("{} requires {}=<n;n;...>", command, attr_name))
+}
+
 fn parse_positions(value: &str) -> Result<Vec<Vec3>> {
     let mut points = Vec::new();
     for triple in value.split(';') {
@@ -715,10 +820,65 @@ fn parse_positions(value: &str) -> Result<Vec<Vec3>> {
     Ok(points)
 }
 
+fn parse_scalar_list(value: &str) -> Result<Vec<f64>> {
+    let mut values = Vec::new();
+    for item in value.split(';') {
+        let trimmed = item.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        values.push(parse_f64(trimmed)?);
+    }
+    if values.is_empty() {
+        bail!("scalar list cannot be empty");
+    }
+    Ok(values)
+}
+
+fn parse_loft_sections(value: &str) -> Result<Vec<LoftSection>> {
+    let mut sections = Vec::new();
+    let mut expected_points = None;
+
+    for chunk in value.split('|') {
+        let trimmed = chunk.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((z, profile)) = trimmed.split_once(':') else {
+            bail!("invalid loft section '{}': expected z:profile", trimmed);
+        };
+        let z = parse_f64(z)?;
+        let profile = parse_profile2(profile)?;
+        if profile.len() < 3 {
+            bail!("loft sections require profiles with at least three points");
+        }
+        match expected_points {
+            Some(count) if count != profile.len() => {
+                bail!("all loft sections must use the same profile point count")
+            }
+            None => expected_points = Some(profile.len()),
+            _ => {}
+        }
+        sections.push(LoftSection { z, profile });
+    }
+
+    if sections.len() < 2 {
+        bail!("loft requires at least two sections");
+    }
+
+    Ok(sections)
+}
+
 fn parse_f64(value: &str) -> Result<f64> {
     value
         .parse::<f64>()
         .with_context(|| format!("invalid number '{}'", value))
+}
+
+fn parse_usize(value: &str) -> Result<usize> {
+    value
+        .parse::<usize>()
+        .with_context(|| format!("invalid integer '{}'", value))
 }
 
 fn parse_vec3(value: &str) -> Result<Vec3> {
@@ -986,17 +1146,23 @@ mod tests {
             group cluster children=ball,box rotate=0,0,45
             transform lift at=0,0,5
             apply lift to=cluster
+            expect_attach ball box
+            expect_intersect ball box
+            expect_ground box
             union blob ball box
             extrude wall profile=0,0;1,0;1,1;0,1 depth=2
+            loft snout sections=0:0,0;1,0;1,1;0,1|1:0.1,0.1;0.9,0.1;0.9,0.9;0.1,0.9
+            skin bridge path=0,0,0;0,0,1 radii=0.4;0.2
             revolve vase profile=1,0;0.5,2 axis=z angle=180
             sweep rail profile=0,0;0.25,0;0.25,0.25;0,0.25 path=0,0,0;0,0,2
         "#;
         let scene = parse_scene(source).unwrap();
         scene.validate().unwrap();
-        assert_eq!(scene.objects.len(), 5);
+        assert_eq!(scene.objects.len(), 7);
         assert_eq!(scene.groups.len(), 1);
         assert_eq!(scene.transforms.len(), 1);
         assert_eq!(scene.applies.len(), 1);
+        assert_eq!(scene.constraints.len(), 3);
         assert_eq!(scene.booleans.len(), 1);
     }
 

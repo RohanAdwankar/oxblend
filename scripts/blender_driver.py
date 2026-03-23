@@ -8,6 +8,14 @@ import bmesh
 from mathutils import Vector, Matrix
 
 DEFAULT_COLOR = (0.72, 0.72, 0.72, 1.0)
+SNAPSHOT_VIEWS = [
+    ("isometric", (1.55, -2.35, 1.10), 58),
+    ("front", (0.0, 3.20, 0.22), 72),
+    ("left", (3.10, 0.0, 0.14), 72),
+    ("right", (-3.10, 0.0, 0.14), 72),
+    ("back", (0.0, -3.20, 0.22), 72),
+    ("top", (0.0, -0.05, 3.85), 65),
+]
 
 
 def parse_args():
@@ -74,6 +82,8 @@ def build_primitive(obj_spec):
         bpy.ops.mesh.primitive_cylinder_add(radius=kind["radius"], depth=kind["depth"])
     elif kind_type == "capsule":
         create_capsule(obj_spec["name"], kind["radius"], kind["depth"])
+    elif kind_type == "skin":
+        create_skin(obj_spec["name"], kind["path"], kind["radii"], kind["sides"])
     elif kind_type == "cone":
         bpy.ops.mesh.primitive_cone_add(
             radius1=kind["radius"], radius2=0.0, depth=kind["depth"]
@@ -84,6 +94,8 @@ def build_primitive(obj_spec):
         )
     elif kind_type == "extrude":
         create_extrusion(obj_spec["name"], kind["profile"], kind["depth"])
+    elif kind_type == "loft":
+        create_loft(obj_spec["name"], kind["sections"])
     elif kind_type == "revolve":
         create_revolve(obj_spec["name"], kind["profile"], kind["axis"], kind["angle_degrees"])
     elif kind_type == "sweep":
@@ -139,6 +151,81 @@ def create_capsule(name, radius, depth):
     bpy.context.view_layer.objects.active = pieces[0]
     bpy.ops.object.join()
     bpy.context.active_object.name = name
+
+
+def create_loft(name, sections):
+    bm = bmesh.new()
+    rings = []
+
+    for section in sections:
+        z = section["z"]
+        ring = [bm.verts.new((point[0], point[1], z)) for point in section["profile"]]
+        rings.append(ring)
+
+    bm.faces.new(list(reversed(rings[0])))
+
+    for left, right in zip(rings, rings[1:]):
+        for index in range(len(left)):
+            next_index = (index + 1) % len(left)
+            bm.faces.new((left[index], left[next_index], right[next_index], right[index]))
+
+    bm.faces.new(rings[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    create_mesh_object(name, bm)
+
+
+def normalize_vector(values):
+    vector = Vector(values)
+    if vector.length < 1e-8:
+        return Vector((0.0, 0.0, 1.0))
+    return vector.normalized()
+
+
+def section_frame(path, index):
+    if index == 0:
+        tangent = Vector(path[1]) - Vector(path[0])
+    elif index == len(path) - 1:
+        tangent = Vector(path[-1]) - Vector(path[-2])
+    else:
+        tangent = Vector(path[index + 1]) - Vector(path[index - 1])
+    tangent = normalize_vector(tangent)
+
+    up = Vector((0.0, 0.0, 1.0))
+    if abs(tangent.dot(up)) > 0.95:
+        up = Vector((0.0, 1.0, 0.0))
+    normal = tangent.cross(up)
+    if normal.length < 1e-8:
+        normal = Vector((1.0, 0.0, 0.0))
+    normal.normalize()
+    binormal = tangent.cross(normal)
+    binormal.normalize()
+    return normal, binormal
+
+
+def create_skin(name, path, radii, sides):
+    bm = bmesh.new()
+    rings = []
+
+    for index, point in enumerate(path):
+        normal, binormal = section_frame(path, index)
+        center = Vector(point)
+        radius = radii[index]
+        ring = []
+        for step in range(sides):
+            angle = 2.0 * math.pi * step / sides
+            offset = normal * math.cos(angle) * radius + binormal * math.sin(angle) * radius
+            ring.append(bm.verts.new(center + offset))
+        rings.append(ring)
+
+    for left, right in zip(rings, rings[1:]):
+        for index in range(len(left)):
+            next_index = (index + 1) % len(left)
+            bm.faces.new((left[index], left[next_index], right[next_index], right[index]))
+
+    bm.faces.new(list(reversed(rings[0])))
+    bm.faces.new(rings[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    create_mesh_object(name, bm)
 
 
 def create_revolve(name, profile, axis, angle_degrees):
@@ -234,8 +321,86 @@ def export_scene(output_path, output_format):
         bpy.ops.export_scene.gltf(
             filepath=str(output_path), export_format="GLB", use_selection=True
         )
+    elif output_format == ".png":
+        render_snapshot(output_path)
     else:
         raise SystemExit(f"unsupported output format {output_format}")
+
+
+def frame_objects(objects):
+    mins = [float("inf")] * 3
+    maxs = [float("-inf")] * 3
+    for obj in objects:
+        for point in obj.bound_box:
+            world = obj.matrix_world @ Vector(point)
+            mins[0] = min(mins[0], world.x)
+            mins[1] = min(mins[1], world.y)
+            mins[2] = min(mins[2], world.z)
+            maxs[0] = max(maxs[0], world.x)
+            maxs[1] = max(maxs[1], world.y)
+            maxs[2] = max(maxs[2], world.z)
+    min_v = Vector(mins)
+    max_v = Vector(maxs)
+    center = (min_v + max_v) * 0.5
+    size = max_v - min_v
+    radius = max(size.length * 0.55, 1.0)
+    return center, radius, min_v
+
+
+def ensure_camera_and_lights(mesh_objects):
+    center, radius, min_v = frame_objects(mesh_objects)
+
+    scene = bpy.context.scene
+    scene.render.engine = "BLENDER_WORKBENCH"
+    scene.render.resolution_x = 1024
+    scene.render.resolution_y = 1024
+    scene.render.film_transparent = False
+
+    world = scene.world or bpy.data.worlds.new("World")
+    scene.world = world
+    world.use_nodes = True
+    background = world.node_tree.nodes["Background"]
+    background.inputs["Color"].default_value = (0.79, 0.82, 0.79, 1.0)
+    background.inputs["Strength"].default_value = 0.75
+
+    cam_data = bpy.data.cameras.new("oxblend_snapshot_camera")
+    cam = bpy.data.objects.new("oxblend_snapshot_camera", cam_data)
+    bpy.context.collection.objects.link(cam)
+    scene.camera = cam
+
+    bpy.ops.mesh.primitive_plane_add(size=radius * 8.0, location=(center.x, center.y, min_v.z - 0.02))
+    ground = bpy.context.active_object
+    ground_mat = ensure_material((0.73, 0.77, 0.73, 1.0))
+    if ground.data.materials:
+        ground.data.materials[0] = ground_mat
+    else:
+        ground.data.materials.append(ground_mat)
+
+    return cam, center, radius
+
+
+def configure_snapshot_camera(camera, center, radius, offset, lens):
+    camera.location = center + Vector(
+        (radius * offset[0], radius * offset[1], radius * offset[2])
+    )
+    direction = center - camera.location
+    camera.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+    camera.data.lens = lens
+
+
+def snapshot_paths(output_path):
+    base = output_path.with_suffix("")
+    return [(name, base.with_name(f"{base.name}_{name}.png")) for name, _, _ in SNAPSHOT_VIEWS]
+
+
+def render_snapshot(output_path):
+    mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+    camera, center, radius = ensure_camera_and_lights(mesh_objects)
+    scene = bpy.context.scene
+    for (name, offset, lens), (_, path) in zip(SNAPSHOT_VIEWS, snapshot_paths(output_path)):
+        configure_snapshot_camera(camera, center, radius, offset, lens)
+        scene.render.filepath = str(path)
+        bpy.ops.render.render(write_still=True)
 
 
 def main():

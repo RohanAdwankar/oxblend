@@ -1,10 +1,11 @@
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fmt::Write;
 
 use anyhow::{Result, bail};
 
 use crate::scene::{
-    BooleanOp, ObjectKind, Scene, Transform, Vec2, Vec3,
+    BooleanOp, ConstraintSpec, ObjectKind, Scene, Transform, Vec2, Vec3,
 };
 
 pub fn summarize_scene(scene: &Scene) -> Result<String> {
@@ -51,6 +52,7 @@ pub fn summarize_scene(scene: &Scene) -> Result<String> {
             kind: object_kind_name(&object.kind).to_string(),
             bounds: mesh_bounds[&object.name],
             detail: object_detail(&object.kind),
+            is_mesh: true,
         });
     }
     for boolean in &working.booleans {
@@ -59,6 +61,7 @@ pub fn summarize_scene(scene: &Scene) -> Result<String> {
             kind: format!("boolean::{:?}", boolean.op).to_lowercase(),
             bounds: mesh_bounds[&boolean.name],
             detail: format!("left={} right={}", boolean.left, boolean.right),
+            is_mesh: true,
         });
     }
     for group in &working.groups {
@@ -67,6 +70,7 @@ pub fn summarize_scene(scene: &Scene) -> Result<String> {
             kind: "group".to_string(),
             bounds: group_bounds[&group.name],
             detail: format!("children={}", group.children.join(",")),
+            is_mesh: false,
         });
     }
     all_nodes.sort_by(|a, b| a.name.cmp(&b.name));
@@ -75,6 +79,8 @@ pub fn summarize_scene(scene: &Scene) -> Result<String> {
         .unwrap_or_else(|| Bounds::point(Vec3::ZERO));
     let scene_size = scene_bounds.size();
     let scene_diagonal = magnitude(scene_size);
+    let pairwise = build_pairwise_metrics(&all_nodes, scene_diagonal);
+    let lint = analyze_lint(&working, &all_nodes, &pairwise, scene_diagonal, scene_bounds);
 
     let mut output = String::new();
     writeln!(&mut output, "Scene Summary").unwrap();
@@ -99,6 +105,27 @@ pub fn summarize_scene(scene: &Scene) -> Result<String> {
     writeln!(&mut output, "scene_diagonal: {:.6}", scene_diagonal).unwrap();
     writeln!(&mut output).unwrap();
 
+    writeln!(&mut output, "Lint").unwrap();
+    writeln!(&mut output, "status: {}", if lint.warnings.is_empty() { "ok" } else { "warning" }).unwrap();
+    writeln!(&mut output, "connected_components: {}", lint.components.len()).unwrap();
+    writeln!(&mut output, "attachment_tolerance: {:.6}", lint.attachment_tolerance).unwrap();
+    writeln!(&mut output, "ground_tolerance: {:.6}", lint.ground_tolerance).unwrap();
+    if lint.warnings.is_empty() {
+        writeln!(&mut output, "warnings: none").unwrap();
+    } else {
+        for warning in &lint.warnings {
+            writeln!(&mut output, "warning: {warning}").unwrap();
+        }
+    }
+    if lint.notes.is_empty() {
+        writeln!(&mut output, "notes: none").unwrap();
+    } else {
+        for note in &lint.notes {
+            writeln!(&mut output, "note: {note}").unwrap();
+        }
+    }
+    writeln!(&mut output).unwrap();
+
     writeln!(&mut output, "Nodes").unwrap();
     for node in &all_nodes {
         let center = node.bounds.center();
@@ -120,34 +147,20 @@ pub fn summarize_scene(scene: &Scene) -> Result<String> {
 
     writeln!(&mut output).unwrap();
     writeln!(&mut output, "Pairwise").unwrap();
-    for (idx, left) in all_nodes.iter().enumerate() {
-        for right in all_nodes.iter().skip(idx + 1) {
-            let center_distance = distance(left.bounds.center(), right.bounds.center());
-            let gap_distance = aabb_gap_distance(left.bounds, right.bounds);
-            let intersects = bounds_intersect(left.bounds, right.bounds);
-            let relative_center = if scene_diagonal > 0.0 {
-                center_distance / scene_diagonal
-            } else {
-                0.0
-            };
-            let relative_gap = if scene_diagonal > 0.0 {
-                gap_distance / scene_diagonal
-            } else {
-                0.0
-            };
-            writeln!(
-                &mut output,
-                "{} <-> {} | intersects={} | center_distance={:.6} | gap_distance={:.6} | center_distance_relative={:.6} | gap_distance_relative={:.6}",
-                left.name,
-                right.name,
-                intersects,
-                center_distance,
-                gap_distance,
-                relative_center,
-                relative_gap
-            )
-            .unwrap();
-        }
+    for metric in &pairwise {
+        writeln!(
+            &mut output,
+            "{} <-> {} | intersects={} | attached={} | center_distance={:.6} | gap_distance={:.6} | center_distance_relative={:.6} | gap_distance_relative={:.6}",
+            all_nodes[metric.left].name,
+            all_nodes[metric.right].name,
+            metric.intersects,
+            metric.attached,
+            metric.center_distance,
+            metric.gap_distance,
+            metric.relative_center,
+            metric.relative_gap
+        )
+        .unwrap();
     }
 
     Ok(output)
@@ -194,6 +207,26 @@ struct NodeSummary {
     kind: String,
     bounds: Bounds,
     detail: String,
+    is_mesh: bool,
+}
+
+struct PairwiseMetric {
+    left: usize,
+    right: usize,
+    center_distance: f64,
+    gap_distance: f64,
+    intersects: bool,
+    attached: bool,
+    relative_center: f64,
+    relative_gap: f64,
+}
+
+struct LintSummary {
+    attachment_tolerance: f64,
+    ground_tolerance: f64,
+    components: Vec<Vec<usize>>,
+    warnings: Vec<String>,
+    notes: Vec<String>,
 }
 
 fn apply_named_transforms(scene: &mut Scene) -> Result<()> {
@@ -259,6 +292,19 @@ fn local_bounds_for_kind(kind: &ObjectKind) -> Bounds {
             min: Vec3(-radius, -radius, -depth * 0.5),
             max: Vec3(*radius, *radius, *depth * 0.5),
         },
+        ObjectKind::Skin { path, radii, .. } => {
+            let mut min = Vec3(f64::INFINITY, f64::INFINITY, f64::INFINITY);
+            let mut max = Vec3(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+            for (point, radius) in path.iter().zip(radii) {
+                min.0 = min.0.min(point.0 - radius);
+                min.1 = min.1.min(point.1 - radius);
+                min.2 = min.2.min(point.2 - radius);
+                max.0 = max.0.max(point.0 + radius);
+                max.1 = max.1.max(point.1 + radius);
+                max.2 = max.2.max(point.2 + radius);
+            }
+            Bounds { min, max }
+        }
         ObjectKind::Torus {
             major_radius,
             minor_radius,
@@ -274,6 +320,27 @@ fn local_bounds_for_kind(kind: &ObjectKind) -> Bounds {
             Bounds {
                 min: Vec3(min_x, min_y, 0.0),
                 max: Vec3(max_x, max_y, *depth),
+            }
+        }
+        ObjectKind::Loft { sections } => {
+            let mut min_x = f64::INFINITY;
+            let mut max_x = f64::NEG_INFINITY;
+            let mut min_y = f64::INFINITY;
+            let mut max_y = f64::NEG_INFINITY;
+            let mut min_z = f64::INFINITY;
+            let mut max_z = f64::NEG_INFINITY;
+            for section in sections {
+                let (sx0, sx1, sy0, sy1) = profile2_extents(&section.profile);
+                min_x = min_x.min(sx0);
+                max_x = max_x.max(sx1);
+                min_y = min_y.min(sy0);
+                max_y = max_y.max(sy1);
+                min_z = min_z.min(section.z);
+                max_z = max_z.max(section.z);
+            }
+            Bounds {
+                min: Vec3(min_x, min_y, min_z),
+                max: Vec3(max_x, max_y, max_z),
             }
         }
         ObjectKind::Revolve { profile, .. } => {
@@ -469,9 +536,11 @@ fn object_kind_name(kind: &ObjectKind) -> &'static str {
         ObjectKind::Cube { .. } => "cube",
         ObjectKind::Cylinder { .. } => "cylinder",
         ObjectKind::Capsule { .. } => "capsule",
+        ObjectKind::Skin { .. } => "skin",
         ObjectKind::Cone { .. } => "cone",
         ObjectKind::Torus { .. } => "torus",
         ObjectKind::Extrude { .. } => "extrude",
+        ObjectKind::Loft { .. } => "loft",
         ObjectKind::Revolve { .. } => "revolve",
         ObjectKind::Sweep { .. } => "sweep",
     }
@@ -487,6 +556,14 @@ fn object_detail(kind: &ObjectKind) -> String {
         ObjectKind::Capsule { radius, depth } => {
             format!("radius={radius:.6} depth={depth:.6}")
         }
+        ObjectKind::Skin { path, radii, sides } => {
+            format!(
+                "path_points={} radii_points={} sides={}",
+                path.len(),
+                radii.len(),
+                sides
+            )
+        }
         ObjectKind::Cone { radius, depth } => format!("radius={radius:.6} depth={depth:.6}"),
         ObjectKind::Torus {
             major_radius,
@@ -494,6 +571,13 @@ fn object_detail(kind: &ObjectKind) -> String {
         } => format!("major_radius={major_radius:.6} minor_radius={minor_radius:.6}"),
         ObjectKind::Extrude { profile, depth } => {
             format!("profile_points={} depth={depth:.6}", profile.len())
+        }
+        ObjectKind::Loft { sections } => {
+            format!(
+                "sections={} profile_points={}",
+                sections.len(),
+                sections.first().map(|section| section.profile.len()).unwrap_or(0)
+            )
         }
         ObjectKind::Revolve {
             profile,
@@ -530,5 +614,344 @@ mod tests {
         assert!(summary.contains("row_1__rack"));
         assert!(summary.contains("row_2__rack"));
         assert!(summary.contains("Pairwise"));
+    }
+
+    #[test]
+    fn summarizes_disconnected_warning() {
+        let scene = parse_scene(
+            r#"
+            sphere body radius=1
+            sphere nose radius=0.2 at=3,0,0
+            "#,
+        )
+        .unwrap();
+        let summary = summarize_scene(&scene).unwrap();
+        assert!(summary.contains("status: warning"));
+        assert!(summary.contains("disconnected component"));
+    }
+
+    #[test]
+    fn summarizes_failed_attach_constraint() {
+        let scene = parse_scene(
+            r#"
+            sphere body radius=1
+            sphere nose radius=0.2 at=3,0,0
+            expect_attach body nose
+            "#,
+        )
+        .unwrap();
+        let summary = summarize_scene(&scene).unwrap();
+        assert!(summary.contains("constraint expect_attach failed"));
+    }
+
+    #[test]
+    fn summarizes_failed_intersect_constraint() {
+        let scene = parse_scene(
+            r#"
+            sphere body radius=1
+            sphere nose radius=0.2 at=1.8,0,0
+            expect_intersect body nose
+            "#,
+        )
+        .unwrap();
+        let summary = summarize_scene(&scene).unwrap();
+        assert!(summary.contains("constraint expect_intersect failed"));
+    }
+}
+
+fn build_pairwise_metrics(nodes: &[NodeSummary], scene_diagonal: f64) -> Vec<PairwiseMetric> {
+    let attachment_tolerance = attachment_tolerance(scene_diagonal);
+    let mut metrics = Vec::new();
+    for (idx, left) in nodes.iter().enumerate() {
+        for (jdx, right) in nodes.iter().enumerate().skip(idx + 1) {
+            let center_distance = distance(left.bounds.center(), right.bounds.center());
+            let gap_distance = aabb_gap_distance(left.bounds, right.bounds);
+            let intersects = bounds_intersect(left.bounds, right.bounds);
+            let relative_center = if scene_diagonal > 0.0 {
+                center_distance / scene_diagonal
+            } else {
+                0.0
+            };
+            let relative_gap = if scene_diagonal > 0.0 {
+                gap_distance / scene_diagonal
+            } else {
+                0.0
+            };
+            metrics.push(PairwiseMetric {
+                left: idx,
+                right: jdx,
+                center_distance,
+                gap_distance,
+                intersects,
+                attached: intersects || gap_distance <= attachment_tolerance,
+                relative_center,
+                relative_gap,
+            });
+        }
+    }
+    metrics
+}
+
+fn analyze_lint(
+    scene: &Scene,
+    nodes: &[NodeSummary],
+    pairwise: &[PairwiseMetric],
+    scene_diagonal: f64,
+    scene_bounds: Bounds,
+) -> LintSummary {
+    let mesh_indices = nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| node.is_mesh.then_some(index))
+        .collect::<Vec<_>>();
+    let tolerance = attachment_tolerance(scene_diagonal);
+    let ground_tolerance = ground_tolerance(scene_diagonal);
+    let mut adjacency = vec![Vec::new(); nodes.len()];
+    for metric in pairwise {
+        if metric.attached && nodes[metric.left].is_mesh && nodes[metric.right].is_mesh {
+            adjacency[metric.left].push(metric.right);
+            adjacency[metric.right].push(metric.left);
+        }
+    }
+
+    let mut visited = vec![false; nodes.len()];
+    let mut components = Vec::new();
+    for &start in &mesh_indices {
+        if visited[start] {
+            continue;
+        }
+        let mut queue = VecDeque::from([start]);
+        let mut component = Vec::new();
+        visited[start] = true;
+        while let Some(index) = queue.pop_front() {
+            component.push(index);
+            for &next in &adjacency[index] {
+                if !visited[next] {
+                    visited[next] = true;
+                    queue.push_back(next);
+                }
+            }
+        }
+        component.sort_unstable();
+        components.push(component);
+    }
+    components.sort_by_key(|component| (component.len(), nodes[component[0]].name.clone()));
+
+    let mut warnings = Vec::new();
+    let mut notes = Vec::new();
+    if components.len() > 1 {
+        for component in components.iter().skip(1) {
+            let names = component
+                .iter()
+                .map(|&index| nodes[index].name.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            warnings.push(format!(
+                "disconnected component size={} nodes={}",
+                component.len(),
+                names
+            ));
+        }
+    }
+
+    for (index, node) in nodes.iter().enumerate() {
+        if !node.is_mesh {
+            continue;
+        }
+        if adjacency[index].is_empty() && mesh_indices.len() > 1 {
+            if let Some(nearest) = nearest_neighbor(index, pairwise, nodes) {
+                warnings.push(format!(
+                    "{} has no attached neighbors; nearest={} gap_distance={:.6}",
+                    node.name, nodes[nearest.0].name, nearest.1
+                ));
+            }
+        }
+    }
+
+    let by_name = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.name.as_str(), index))
+        .collect::<HashMap<_, _>>();
+
+    for constraint in &scene.constraints {
+        match constraint {
+            ConstraintSpec::Attach { left, right } => {
+                let Some(&left_index) = by_name.get(left.as_str()) else {
+                    continue;
+                };
+                let Some(&right_index) = by_name.get(right.as_str()) else {
+                    continue;
+                };
+                let attached = pairwise
+                    .iter()
+                    .find(|metric| {
+                        (metric.left == left_index && metric.right == right_index)
+                            || (metric.left == right_index && metric.right == left_index)
+                    })
+                    .map(|metric| metric.attached)
+                    .unwrap_or(false);
+                if !attached {
+                    warnings.push(format!(
+                        "constraint expect_attach failed: {} is not attached to {}",
+                        left, right
+                    ));
+                }
+            }
+            ConstraintSpec::Intersect { left, right } => {
+                let Some(&left_index) = by_name.get(left.as_str()) else {
+                    continue;
+                };
+                let Some(&right_index) = by_name.get(right.as_str()) else {
+                    continue;
+                };
+                let intersects = pairwise
+                    .iter()
+                    .find(|metric| {
+                        (metric.left == left_index && metric.right == right_index)
+                            || (metric.left == right_index && metric.right == left_index)
+                    })
+                    .map(|metric| metric.intersects)
+                    .unwrap_or(false);
+                if !intersects {
+                    warnings.push(format!(
+                        "constraint expect_intersect failed: {} does not intersect {}",
+                        left, right
+                    ));
+                }
+            }
+            ConstraintSpec::Ground { target } => {
+                let Some(&index) = by_name.get(target.as_str()) else {
+                    continue;
+                };
+                let node = &nodes[index];
+                let gap = (node.bounds.min.2 - scene_bounds.min.2).abs();
+                if gap > ground_tolerance {
+                    warnings.push(format!(
+                        "constraint expect_ground failed: {} is {:.6} above scene floor",
+                        target, gap
+                    ));
+                }
+            }
+        }
+    }
+
+    notes.extend(infer_mirror_notes(nodes));
+
+    warnings.sort();
+    warnings.dedup();
+    notes.sort();
+    notes.dedup();
+
+    LintSummary {
+        attachment_tolerance: tolerance,
+        ground_tolerance,
+        components,
+        warnings,
+        notes,
+    }
+}
+
+fn nearest_neighbor(index: usize, pairwise: &[PairwiseMetric], nodes: &[NodeSummary]) -> Option<(usize, f64)> {
+    pairwise
+        .iter()
+        .filter_map(|metric| {
+            if metric.left == index {
+                Some((metric.right, metric.gap_distance))
+            } else if metric.right == index {
+                Some((metric.left, metric.gap_distance))
+            } else {
+                None
+            }
+        })
+        .filter(|(other, _)| nodes[*other].is_mesh)
+        .min_by(|left, right| left.1.total_cmp(&right.1).then(left.0.cmp(&right.0)))
+}
+
+fn attachment_tolerance(scene_diagonal: f64) -> f64 {
+    if scene_diagonal <= 0.0 {
+        0.0
+    } else {
+        (scene_diagonal * 0.015).max(0.05)
+    }
+}
+
+fn ground_tolerance(scene_diagonal: f64) -> f64 {
+    if scene_diagonal <= 0.0 {
+        0.0
+    } else {
+        (scene_diagonal * 0.01).max(0.04)
+    }
+}
+
+fn infer_mirror_notes(nodes: &[NodeSummary]) -> Vec<String> {
+    let mut positive: HashMap<String, &NodeSummary> = HashMap::new();
+    let mut negative: HashMap<String, &NodeSummary> = HashMap::new();
+    for node in nodes {
+        if let Some((prefix, suffix)) = node.name.split_once("_pos__") {
+            positive.insert(format!("{prefix}::{suffix}"), node);
+        } else if let Some((prefix, suffix)) = node.name.split_once("_neg__") {
+            negative.insert(format!("{prefix}::{suffix}"), node);
+        }
+    }
+
+    let mut notes = Vec::new();
+    for (key, left) in &positive {
+        let Some(right) = negative.get(key) else {
+            notes.push(format!("mirror pair missing negative counterpart for {}", left.name));
+            continue;
+        };
+        let axis = best_mirror_axis(left.bounds.center(), right.bounds.center());
+        let center_error = mirror_center_error(left.bounds.center(), right.bounds.center(), axis);
+        let size_error = distance(left.bounds.size(), right.bounds.size());
+        notes.push(format!(
+            "mirror_pair {} <-> {} | axis={} | center_error={:.6} | size_error={:.6}",
+            left.name,
+            right.name,
+            axis_label(axis),
+            center_error,
+            size_error
+        ));
+    }
+    for (key, right) in &negative {
+        if !positive.contains_key(key) {
+            notes.push(format!("mirror pair missing positive counterpart for {}", right.name));
+        }
+    }
+    notes
+}
+
+#[derive(Clone, Copy)]
+enum MirrorAuditAxis {
+    X,
+    Y,
+    Z,
+}
+
+fn best_mirror_axis(left: Vec3, right: Vec3) -> MirrorAuditAxis {
+    let candidates = [MirrorAuditAxis::X, MirrorAuditAxis::Y, MirrorAuditAxis::Z];
+    candidates
+        .into_iter()
+        .min_by(|a, b| {
+            mirror_center_error(left, right, *a)
+                .total_cmp(&mirror_center_error(left, right, *b))
+        })
+        .unwrap_or(MirrorAuditAxis::X)
+}
+
+fn mirror_center_error(left: Vec3, right: Vec3, axis: MirrorAuditAxis) -> f64 {
+    let reflected = match axis {
+        MirrorAuditAxis::X => Vec3(-left.0, left.1, left.2),
+        MirrorAuditAxis::Y => Vec3(left.0, -left.1, left.2),
+        MirrorAuditAxis::Z => Vec3(left.0, left.1, -left.2),
+    };
+    distance(reflected, right)
+}
+
+fn axis_label(axis: MirrorAuditAxis) -> &'static str {
+    match axis {
+        MirrorAuditAxis::X => "x",
+        MirrorAuditAxis::Y => "y",
+        MirrorAuditAxis::Z => "z",
     }
 }

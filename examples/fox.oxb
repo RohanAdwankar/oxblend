@@ -1,37 +1,63 @@
 # Stylized fox using mirrored anatomy and capsule-based limbs.
 
-sphere chest radius=1.35 at=0,0.20,2.60 scale=1.15,1.35,1.00 color=#c96a24
-sphere hips radius=1.20 at=0,-1.40,2.40 scale=1.20,1.45,1.00 color=#b95b1b
-capsule spine radius=0.95 depth=3.20 at=0,-0.55,2.50 rotate=-90,0,0 scale=1.00,1.00,1.08 color=#c76320
-sphere bib radius=0.58 at=0,1.10,2.35 scale=0.70,1.20,1.15 color=#f6f1ea
+sphere chest radius=1.18 at=0,0.10,2.55 scale=0.98,1.55,0.96 color=#c96a24
+sphere hips radius=1.02 at=0,-1.55,2.35 scale=1.00,1.35,0.92 color=#b95b1b
+capsule spine radius=0.72 depth=3.65 at=0,-0.72,2.48 rotate=-90,0,0 scale=0.92,1.05,0.96 color=#c76320
+skin torso_blend path=0,0.55,2.62;0,-0.10,2.58;0,-0.78,2.52;0,-1.35,2.42;0,-1.78,2.34 radii=0.90;1.04;1.00;0.94;0.84 color=#c96a24
+sphere bib radius=0.52 at=0,1.02,2.32 scale=0.62,1.28,1.12 color=#f6f1ea
 
-sphere neck radius=0.62 at=0,1.45,2.95 scale=0.90,1.00,1.25 color=#d36d24
-sphere head radius=0.95 at=0,2.65,3.15 scale=0.92,1.15,0.92 color=#d97726
-sphere muzzle radius=0.55 at=0,3.55,2.90 scale=0.75,1.15,0.70 color=#f1e7dc
-sphere chin radius=0.30 at=0,3.42,2.45 scale=0.70,1.00,0.55 color=#f7f2ea
-sphere nose radius=0.18 at=0,4.08,2.86 scale=1.20,1.00,0.85 color=#111111
+skin neck_bridge path=0,0.98,2.78;0,1.42,2.88;0,1.88,2.98;0,2.20,3.04 radii=0.44;0.40;0.36;0.30 color=#d36d24
+sphere neck radius=0.46 at=0,1.56,2.96 scale=0.78,0.92,1.16 color=#d36d24
+sphere head radius=0.80 at=0,2.60,3.08 scale=0.76,1.14,0.84 color=#d97726
+loft muzzle sections=0:-0.48,-0.22;0.48,-0.22;0.34,0.14;0,0.30;-0.34,0.14|0.64:-0.34,-0.17;0.34,-0.17;0.24,0.11;0,0.22;-0.24,0.11|1.22:-0.11,-0.08;0.11,-0.08;0.08,0.05;0,0.11;-0.08,0.05 at=0,3.24,2.82 rotate=90,0,0 color=#f1e7dc
+skin snout_bridge path=0,2.95,2.88;0,3.45,2.85;0,3.92,2.82;0,4.22,2.81 radii=0.32;0.24;0.16;0.12 color=#eadfd3
+sphere chin radius=0.28 at=0,3.55,2.34 scale=0.78,1.05,0.52 color=#f7f2ea
+sphere nose radius=0.17 at=0,4.24,2.81 scale=1.60,1.10,0.90 color=#111111
+
+expect_intersect head muzzle
+expect_intersect muzzle snout_bridge
+expect_intersect nose snout_bridge
+expect_intersect neck_bridge head
+expect_intersect neck_bridge chest
+expect_intersect spine chest
+expect_intersect spine hips
+expect_intersect torso_blend chest
+expect_intersect torso_blend hips
 
 mirror ear axis=x {
-  cone outer radius=0.34 depth=0.95 at=0.45,2.42,4.05 rotate=14,-8,10 scale=0.90,0.80,1.00 color=#cf7126
-  cone inner radius=0.18 depth=0.60 at=0.45,2.50,3.95 rotate=14,-8,10 scale=0.80,0.70,1.00 color=#f5d8c4
+  loft outer sections=0:-0.24,-0.10;0.24,-0.10;0.16,0.20;-0.16,0.20|0.58:-0.15,-0.02;0.15,-0.02;0.08,0.30;-0.08,0.30|1.12:-0.02,0.02;0.02,0.02;0,0.42;0,0.05 at=0.58,2.34,3.54 rotate=26,-14,22 color=#cf7126
+  loft inner sections=0:-0.12,-0.03;0.12,-0.03;0.08,0.12;-0.08,0.12|0.50:-0.08,0.01;0.08,0.01;0.05,0.20;-0.05,0.20|0.82:-0.01,0.03;0.01,0.03;0,0.24;0,0.04 at=0.58,2.40,3.62 rotate=26,-14,22 color=#f5d8c4
+  expect_intersect outer @head
 }
 
 mirror face axis=x {
-  sphere eye radius=0.09 at=0.26,3.35,3.18 color=#101010
-  sphere cheek radius=0.28 at=0.50,3.22,2.78 scale=0.80,1.00,0.70 color=#f5eee5
+  sphere eye radius=0.06 at=0.33,3.14,3.16 color=#101010
+  sphere cheek radius=0.17 at=0.56,3.12,2.70 scale=0.68,1.00,0.52 color=#f5eee5
 }
 
 mirror front axis=x {
-  capsule upper radius=0.22 depth=1.50 at=0.78,0.65,1.60 rotate=12,8,0 color=#c86a24
-  capsule lower radius=0.17 depth=1.45 at=0.78,0.78,0.62 rotate=3,2,0 color=#f5eee5
-  sphere paw radius=0.18 at=0.78,0.86,-0.02 scale=1.20,1.60,0.75 color=#f5eee5
+  skin shoulder path=0.18,0.70,2.12;0.38,0.74,1.90;0.60,0.80,1.64;0.74,0.83,1.48 radii=0.30;0.25;0.20;0.18 color=#c86a24
+  capsule upper radius=0.19 depth=1.45 at=0.72,0.80,1.42 rotate=16,8,0 color=#c86a24
+  capsule lower radius=0.16 depth=1.42 at=0.74,0.90,0.22 rotate=4,2,0 color=#f5eee5
+  sphere paw radius=0.17 at=0.76,0.96,-0.58 scale=1.28,1.56,0.72 color=#f5eee5
+  expect_intersect shoulder @chest
+  expect_intersect shoulder upper
+  expect_intersect upper lower
+  expect_intersect lower paw
+  expect_ground paw
 }
 
 mirror rear axis=x {
-  capsule thigh radius=0.28 depth=1.45 at=0.92,-1.55,1.95 rotate=-28,-8,0 color=#bb5c1c
-  capsule shin radius=0.18 depth=1.55 at=0.88,-1.02,0.68 rotate=18,6,0 color=#f5eee5
-  sphere paw radius=0.20 at=0.90,-0.72,-0.02 scale=1.25,1.55,0.75 color=#f5eee5
+  skin hip_joint path=0.26,-1.30,2.10;0.48,-1.50,1.84;0.62,-1.66,1.48;0.70,-1.74,1.16 radii=0.28;0.25;0.22;0.18 color=#bb5c1c
+  capsule thigh radius=0.21 depth=1.22 at=0.68,-1.66,0.98 rotate=-28,-7,0 color=#bb5c1c
+  capsule shin radius=0.17 depth=1.32 at=0.68,-1.48,-0.02 rotate=8,4,0 color=#f5eee5
+  sphere paw radius=0.18 at=0.66,-1.28,-0.56 scale=1.35,1.55,0.78 color=#f5eee5
+  expect_intersect hip_joint @hips
+  expect_intersect hip_joint thigh
+  expect_intersect thigh shin
+  expect_intersect shin paw
+  expect_ground paw
 }
 
-sweep tail_base profile=0,0.26;0.15,0.20;0.21,0;0.15,-0.20;0,-0.26;-0.15,-0.20;-0.21,0;-0.15,0.20 path=0,-2.10,2.55;0.12,-3.00,2.90;0.34,-3.95,3.30;0.58,-4.82,3.66 color=#d67023
-sweep tail_tip profile=0,0.18;0.10,0.14;0.14,0;0.10,-0.14;0,-0.18;-0.10,-0.14;-0.14,0;-0.10,0.14 path=0.58,-4.82,3.66;0.72,-5.32,3.86;0.82,-5.92,4.03 color=#f7f2ea
+sweep tail_base profile=0,0.22;0.12,0.17;0.18,0;0.12,-0.17;0,-0.22;-0.12,-0.17;-0.18,0;-0.12,0.17 path=0,-2.18,2.50;0.12,-2.92,2.80;0.28,-3.65,3.05;0.46,-4.36,3.30 color=#d67023
+sweep tail_tip profile=0,0.15;0.08,0.11;0.12,0;0.08,-0.11;0,-0.15;-0.08,-0.11;-0.12,0;-0.08,0.11 path=0.46,-4.36,3.30;0.56,-4.90,3.48;0.64,-5.48,3.58 color=#f7f2ea

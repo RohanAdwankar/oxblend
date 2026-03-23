@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use clap::{Parser as ClapParser, Subcommand};
 
-use crate::bridge::run_blender_export;
+use crate::bridge::{run_blender_export, run_blender_snapshot};
 use crate::parser::parse_scene;
 use crate::scene::OutputFormat;
 use crate::summary::summarize_scene;
@@ -63,6 +63,19 @@ enum Command {
         /// Input .oxb scene file
         input: PathBuf,
     },
+    /// Render a PNG snapshot of a .oxb scene
+    Snapshot {
+        /// Input .oxb scene file
+        input: PathBuf,
+
+        /// Output PNG path
+        #[arg(short, long)]
+        output: PathBuf,
+
+        /// Path to a Blender executable
+        #[arg(long)]
+        blender_bin: Option<PathBuf>,
+    },
 }
 
 #[tokio::main]
@@ -80,6 +93,18 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("failed to parse {}", input.display()))?;
             scene.validate()?;
             print!("{}", summarize_scene(&scene)?);
+        }
+        Some(Command::Snapshot {
+            input,
+            output,
+            blender_bin,
+        }) => {
+            let source = fs::read_to_string(&input)
+                .with_context(|| format!("failed to read input file {}", input.display()))?;
+            let mut scene = parse_scene(&source)
+                .with_context(|| format!("failed to parse {}", input.display()))?;
+            scene.validate()?;
+            run_blender_snapshot(&mut scene, &output, blender_bin.as_deref())?;
         }
         Some(Command::Export {
             input,

@@ -12,6 +12,7 @@ pub struct Scene {
     pub booleans: Vec<BooleanSpec>,
     pub transforms: Vec<NamedTransform>,
     pub applies: Vec<ApplySpec>,
+    pub constraints: Vec<ConstraintSpec>,
 }
 
 impl Scene {
@@ -22,6 +23,7 @@ impl Scene {
             booleans: Vec::new(),
             transforms: Vec::new(),
             applies: Vec::new(),
+            constraints: Vec::new(),
         }
     }
 
@@ -102,6 +104,32 @@ impl Scene {
             }
         }
 
+        for constraint in &self.constraints {
+            match constraint {
+                ConstraintSpec::Attach { left, right } => {
+                    if !mesh_names.contains(left.as_str()) {
+                        bail!("constraint references unknown or non-mesh node '{}'", left);
+                    }
+                    if !mesh_names.contains(right.as_str()) {
+                        bail!("constraint references unknown or non-mesh node '{}'", right);
+                    }
+                }
+                ConstraintSpec::Intersect { left, right } => {
+                    if !mesh_names.contains(left.as_str()) {
+                        bail!("constraint references unknown or non-mesh node '{}'", left);
+                    }
+                    if !mesh_names.contains(right.as_str()) {
+                        bail!("constraint references unknown or non-mesh node '{}'", right);
+                    }
+                }
+                ConstraintSpec::Ground { target } => {
+                    if !mesh_names.contains(target.as_str()) {
+                        bail!("constraint references unknown or non-mesh node '{}'", target);
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -158,15 +186,23 @@ pub enum ObjectKind {
     Cube { size: f64 },
     Cylinder { radius: f64, depth: f64 },
     Capsule { radius: f64, depth: f64 },
+    Skin { path: Vec<Vec3>, radii: Vec<f64>, sides: usize },
     Cone { radius: f64, depth: f64 },
     Torus { major_radius: f64, minor_radius: f64 },
     Extrude { profile: Vec<Vec2>, depth: f64 },
+    Loft { sections: Vec<LoftSection> },
     Revolve {
         profile: Vec<Vec2>,
         axis: Axis,
         angle_degrees: f64,
     },
     Sweep { profile: Vec<Vec2>, path: Vec<Vec3> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoftSection {
+    pub z: f64,
+    pub profile: Vec<Vec2>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,6 +222,14 @@ pub struct NamedTransform {
 pub struct ApplySpec {
     pub transform: String,
     pub targets: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ConstraintSpec {
+    Attach { left: String, right: String },
+    Intersect { left: String, right: String },
+    Ground { target: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

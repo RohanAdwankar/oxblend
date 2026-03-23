@@ -24,9 +24,11 @@ The current supported object commands are:
 - `cube`
 - `cylinder`
 - `capsule`
+- `skin`
 - `cone`
 - `torus`
 - `extrude`
+- `loft`
 - `revolve`
 - `sweep`
 
@@ -35,6 +37,9 @@ The current supported scene commands are:
 - `group`
 - `transform`
 - `apply`
+- `expect_attach`
+- `expect_intersect`
+- `expect_ground`
 - `union`
 - `difference`
 - `intersection`
@@ -89,6 +94,23 @@ Named transform:
 ```oxb
 transform lift at=0,0,5
 apply lift to=cluster
+```
+
+Constraints:
+
+```oxb
+expect_attach muzzle snout_bridge
+expect_intersect shoulder upper
+expect_ground front_pos__paw
+```
+
+Inside `repeat` or `mirror` blocks, use `@name` to refer to a global node outside the local prefix:
+
+```oxb
+mirror ear axis=x {
+  loft outer sections=...
+  expect_attach outer @head
+}
 ```
 
 Boolean operations:
@@ -166,6 +188,18 @@ Extrude:
 extrude wall profile=0,0;1,0;1,1;0,1 depth=2
 ```
 
+Loft:
+
+```oxb
+loft muzzle sections=0:-0.3,-0.1;0.3,-0.1;0,0.2|0.8:-0.1,-0.05;0.1,-0.05;0,0.08
+```
+
+Skin:
+
+```oxb
+skin bridge path=0,0,0;0,0.4,0.1;0,0.8,0.1 radii=0.2;0.14;0.06
+```
+
 Revolve:
 
 ```oxb
@@ -196,6 +230,7 @@ The parser qualifies repeated names automatically.
 - Use booleans for subtractive design only when needed.
 - Prefer `cube` plus transforms for architectural layouts and low-detail blockouts.
 - Prefer `capsule`, `sphere`, and `mirror` for animals, limbs, tails, and other organic silhouettes.
+- Use `skin` to bridge body parts that should read as physically attached.
 - For readability, separate large structural regions with blank lines and comments.
 
 For complex scenes:
@@ -232,6 +267,7 @@ cargo run -- summarize scene.oxb
 - total object counts
 - object and group names
 - approximate bounds
+- lint warnings for disconnected or unattached parts
 - scene size and diagonal
 - pairwise distances
 - approximate intersections via bounds overlap
@@ -243,6 +279,7 @@ Use it to catch:
 - objects placed outside the intended envelope
 - inconsistent naming
 - spacing that breaks symmetry
+- failed expected attachments or ground contacts
 
 ## Export Guidance
 

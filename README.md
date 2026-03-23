@@ -75,14 +75,19 @@ Supported v1 commands:
 - `cube`
 - `cylinder`
 - `capsule`
+- `skin`
 - `cone`
 - `torus`
 - `extrude`
+- `loft`
 - `revolve`
 - `sweep`
 - `group`
 - `transform`
 - `apply`
+- `expect_attach`
+- `expect_intersect`
+- `expect_ground`
 - `union`
 - `difference`
 - `intersection`
@@ -123,6 +128,9 @@ It includes:
 
 - expanded object counts after repeats
 - object, boolean, and group names
+- lint warnings for disconnected components and unattached parts
+- lint warnings for failed declared constraints
+- inferred mirror-pair notes for repeated bilateral parts
 - approximate bounds, centers, and sizes
 - scene extents and diagonal
 - pairwise intersection and distance information
