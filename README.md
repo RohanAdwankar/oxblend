@@ -1,5 +1,7 @@
 # oxblend
 
+https://github.com/user-attachments/assets/e48a348d-5c58-428c-a217-1cf3c001aa06
+
 `oxblend` is a small declarative scene DSL for Blender-backed mesh export.
 You write a `.oxb` file with objects like spheres, cubes, booleans, groups, and a few generated shapes, then run:
 
