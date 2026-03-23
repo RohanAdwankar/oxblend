@@ -31,6 +31,12 @@ Launch the live viewer:
 cargo run -- view examples/datacenter.oxb
 ```
 
+Generate a deterministic scene summary:
+
+```bash
+cargo run -- summarize examples/datacenter2.oxb
+```
+
 Oxblend should find your Blender for you if it is installed normally.
 
 Otherwise point `oxblend` at it explicitly:
@@ -77,6 +83,7 @@ Supported v1 commands:
 - `union`
 - `difference`
 - `intersection`
+- `repeat`
 
 ## How It Works
 
@@ -103,3 +110,17 @@ For `oxblend view`, there is one extra layer:
 5. The browser reloads the preview model when the new render succeeds.
 
 The current browser preview uses `model-viewer` from a CDN, so the webview expects ordinary internet access for that frontend dependency.
+
+## Deterministic Summary
+
+`oxblend summarize foo.oxb` prints a deterministic text description of the parsed scene.
+
+It includes:
+
+- expanded object counts after repeats
+- object, boolean, and group names
+- approximate bounds, centers, and sizes
+- scene extents and diagonal
+- pairwise intersection and distance information
+
+This is intended for agent workflows that need a stable textual way to verify whether a generated scene is coherent.

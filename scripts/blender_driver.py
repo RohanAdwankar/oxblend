@@ -7,6 +7,8 @@ import bpy
 import bmesh
 from mathutils import Vector, Matrix
 
+DEFAULT_COLOR = (0.72, 0.72, 0.72, 1.0)
+
 
 def parse_args():
     if "--" not in sys.argv:
@@ -46,6 +48,7 @@ def ensure_material(color):
         principled = material.node_tree.nodes["Principled BSDF"]
         principled.inputs["Base Color"].default_value = color
         principled.inputs["Alpha"].default_value = color[3]
+        principled.inputs["Roughness"].default_value = 0.68
     return material
 
 
@@ -89,8 +92,7 @@ def build_primitive(obj_spec):
     obj = bpy.context.active_object
     obj.name = obj_spec["name"]
     apply_transform(obj, obj_spec["transform"])
-    if obj_spec["transform"]["color"] is not None:
-        apply_color(obj, obj_spec["transform"]["color"])
+    apply_color(obj, obj_spec["transform"]["color"] or DEFAULT_COLOR)
     return obj
 
 
@@ -245,8 +247,7 @@ def main():
         result.select_set(True)
         bpy.ops.object.modifier_apply(modifier=modifier.name)
         apply_transform(result, boolean["transform"])
-        if boolean["transform"]["color"] is not None:
-            apply_color(result, boolean["transform"]["color"])
+        apply_color(result, boolean["transform"]["color"] or DEFAULT_COLOR)
         nodes[boolean["name"]] = result
 
     for apply in payload["applies"]:

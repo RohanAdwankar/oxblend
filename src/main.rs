@@ -1,6 +1,7 @@
 mod bridge;
 mod parser;
 mod scene;
+mod summary;
 mod view;
 
 use std::fs;
@@ -12,6 +13,7 @@ use clap::{Parser as ClapParser, Subcommand};
 use crate::bridge::run_blender_export;
 use crate::parser::parse_scene;
 use crate::scene::OutputFormat;
+use crate::summary::summarize_scene;
 use crate::view::run_viewer;
 
 #[derive(Debug, ClapParser)]
@@ -56,6 +58,11 @@ enum Command {
         #[arg(long)]
         blender_bin: Option<PathBuf>,
     },
+    /// Print a deterministic textual summary of a .oxb scene
+    Summarize {
+        /// Input .oxb scene file
+        input: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -65,6 +72,14 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Command::View { input, blender_bin }) => {
             run_viewer(input, blender_bin.or(cli.blender_bin)).await?;
+        }
+        Some(Command::Summarize { input }) => {
+            let source = fs::read_to_string(&input)
+                .with_context(|| format!("failed to read input file {}", input.display()))?;
+            let scene = parse_scene(&source)
+                .with_context(|| format!("failed to parse {}", input.display()))?;
+            scene.validate()?;
+            print!("{}", summarize_scene(&scene)?);
         }
         Some(Command::Export {
             input,
