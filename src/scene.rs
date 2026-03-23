@@ -186,6 +186,7 @@ pub enum ObjectKind {
     Cube { size: f64 },
     Cylinder { radius: f64, depth: f64 },
     Capsule { radius: f64, depth: f64 },
+    Blob { path: Vec<Vec3>, radii: Vec<f64>, resolution: f64 },
     Skin { path: Vec<Vec3>, radii: Vec<f64>, sides: usize },
     Cone { radius: f64, depth: f64 },
     Torus { major_radius: f64, minor_radius: f64 },
@@ -263,6 +264,8 @@ pub struct Transform {
     pub rotation_degrees: Vec3,
     pub scale: Vec3,
     pub color: Option<Color>,
+    pub smooth: bool,
+    pub subdiv: usize,
 }
 
 impl Default for Transform {
@@ -272,6 +275,8 @@ impl Default for Transform {
             rotation_degrees: Vec3::ZERO,
             scale: Vec3::ONE,
             color: None,
+            smooth: false,
+            subdiv: 0,
         }
     }
 }

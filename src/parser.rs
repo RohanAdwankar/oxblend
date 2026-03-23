@@ -177,7 +177,7 @@ impl SceneParser {
             }
 
             match tokens[0].as_str() {
-                "sphere" | "cube" | "cylinder" | "capsule" | "skin" | "cone" | "torus"
+                "sphere" | "cube" | "cylinder" | "capsule" | "blob" | "skin" | "cone" | "torus"
                 | "extrude" | "loft" | "revolve" | "sweep" => {
                     scene.objects.push(self.parse_object(line_no, &tokens, ctx)?)
                 }
@@ -236,6 +236,30 @@ impl SceneParser {
                 let radius = parse_required_scalar(command, "radius", &positional, &attrs, 0)?;
                 let depth = parse_required_scalar(command, "depth", &positional, &attrs, 1)?;
                 (ObjectKind::Capsule { radius, depth }, 2usize)
+            }
+            "blob" => {
+                let path = parse_required_profile3(command, "path", &attrs)?;
+                let radii = parse_required_scalar_list(command, "radii", &attrs)?;
+                if path.len() != radii.len() {
+                    bail!(
+                        "line {}: blob requires path and radii to have the same number of points",
+                        line_no
+                    );
+                }
+                let resolution = attrs
+                    .get("resolution")
+                    .or_else(|| attrs.get("detail"))
+                    .map(|value| parse_f64(value))
+                    .transpose()?
+                    .unwrap_or(0.18);
+                (
+                    ObjectKind::Blob {
+                        path,
+                        radii,
+                        resolution,
+                    },
+                    0usize,
+                )
             }
             "skin" => {
                 let path = parse_required_profile3(command, "path", &attrs)?;
@@ -395,7 +419,7 @@ where
         name = Some(attr_name);
     } else if let Some(first) = positional.first() {
         let treat_as_name = match command {
-            "sphere" | "cube" | "cylinder" | "capsule" | "skin" | "cone" | "torus" => {
+            "sphere" | "cube" | "cylinder" | "capsule" | "blob" | "skin" | "cone" | "torus" => {
                 parse_f64(first).is_err()
             }
             "extrude" | "loft" | "revolve" | "sweep" => {
@@ -722,12 +746,25 @@ fn parse_transform_attrs(attrs: &HashMap<String, String>, positional: &[String])
         Some(value) => Some(value),
         None => positional.get(1).map(|value| parse_color(value)).transpose()?,
     };
+    let smooth = attrs
+        .get("smooth")
+        .map(|value| parse_bool(value))
+        .transpose()?
+        .unwrap_or(false);
+    let subdiv = attrs
+        .get("subdiv")
+        .or_else(|| attrs.get("subdivide"))
+        .map(|value| parse_usize(value))
+        .transpose()?
+        .unwrap_or(0);
 
     Ok(Transform {
         translation,
         rotation_degrees,
         scale,
         color,
+        smooth,
+        subdiv,
     })
 }
 
@@ -879,6 +916,14 @@ fn parse_usize(value: &str) -> Result<usize> {
     value
         .parse::<usize>()
         .with_context(|| format!("invalid integer '{}'", value))
+}
+
+fn parse_bool(value: &str) -> Result<bool> {
+    match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => bail!("invalid boolean '{}'", value),
+    }
 }
 
 fn parse_vec3(value: &str) -> Result<Vec3> {
@@ -1071,6 +1116,8 @@ fn mirror_transform(transform: Transform, axis: MirrorAxis) -> Transform {
         rotation_degrees: rotation,
         scale,
         color: transform.color,
+        smooth: transform.smooth,
+        subdiv: transform.subdiv,
     }
 }
 
@@ -1152,13 +1199,14 @@ mod tests {
             union blob ball box
             extrude wall profile=0,0;1,0;1,1;0,1 depth=2
             loft snout sections=0:0,0;1,0;1,1;0,1|1:0.1,0.1;0.9,0.1;0.9,0.9;0.1,0.9
+            blob cheek path=0,0,0;0.4,0,0 radii=0.4;0.25
             skin bridge path=0,0,0;0,0,1 radii=0.4;0.2
             revolve vase profile=1,0;0.5,2 axis=z angle=180
             sweep rail profile=0,0;0.25,0;0.25,0.25;0,0.25 path=0,0,0;0,0,2
         "#;
         let scene = parse_scene(source).unwrap();
         scene.validate().unwrap();
-        assert_eq!(scene.objects.len(), 7);
+        assert_eq!(scene.objects.len(), 8);
         assert_eq!(scene.groups.len(), 1);
         assert_eq!(scene.transforms.len(), 1);
         assert_eq!(scene.applies.len(), 1);
@@ -1193,13 +1241,16 @@ mod tests {
         let source = r#"
             mirror side axis=x {
               capsule leg radius=0.2 depth=2 at=1,0,1 rotate=5,10,0
+              blob hip path=0,0,0;0,0,0.5 radii=0.3;0.2
             }
         "#;
         let scene = parse_scene(source).unwrap();
         scene.validate().unwrap();
-        assert_eq!(scene.objects.len(), 2);
+        assert_eq!(scene.objects.len(), 4);
         assert!(scene.objects.iter().any(|object| object.name == "side_pos__leg"));
         assert!(scene.objects.iter().any(|object| object.name == "side_neg__leg"));
+        assert!(scene.objects.iter().any(|object| object.name == "side_pos__hip"));
+        assert!(scene.objects.iter().any(|object| object.name == "side_neg__hip"));
         assert!(scene
             .objects
             .iter()
@@ -1208,10 +1259,8 @@ mod tests {
             .objects
             .iter()
             .any(|object| object.transform.translation == Vec3(-1.0, 0.0, 1.0)));
-        assert!(scene
-            .objects
-            .iter()
-            .all(|object| matches!(object.kind, ObjectKind::Capsule { .. })));
+        assert!(scene.objects.iter().any(|object| matches!(object.kind, ObjectKind::Capsule { .. })));
+        assert!(scene.objects.iter().any(|object| matches!(object.kind, ObjectKind::Blob { .. })));
     }
 
     #[test]

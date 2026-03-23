@@ -1,22 +1,25 @@
 # Stylized fox using mirrored anatomy and capsule-based limbs.
 
-sphere chest radius=1.18 at=0,0.10,2.55 scale=0.98,1.55,0.96 color=#c96a24
-sphere hips radius=1.02 at=0,-1.55,2.35 scale=1.00,1.35,0.92 color=#b95b1b
-capsule spine radius=0.72 depth=3.65 at=0,-0.72,2.48 rotate=-90,0,0 scale=0.92,1.05,0.96 color=#c76320
-skin torso_blend path=0,0.55,2.62;0,-0.10,2.58;0,-0.78,2.52;0,-1.35,2.42;0,-1.78,2.34 radii=0.90;1.04;1.00;0.94;0.84 color=#c96a24
-sphere bib radius=0.52 at=0,1.02,2.32 scale=0.62,1.28,1.12 color=#f6f1ea
+sphere chest radius=1.18 at=0,0.10,2.55 scale=0.98,1.55,0.96 color=#c96a24 smooth=true subdiv=1
+sphere hips radius=1.02 at=0,-1.55,2.35 scale=1.00,1.35,0.92 color=#b95b1b smooth=true subdiv=1
+capsule spine radius=0.72 depth=3.65 at=0,-0.72,2.48 rotate=-90,0,0 scale=0.92,1.05,0.96 color=#c76320 smooth=true subdiv=1
+skin torso_blend path=0,0.55,2.62;0,-0.10,2.58;0,-0.78,2.52;0,-1.35,2.42;0,-1.78,2.34 radii=0.90;1.04;1.00;0.94;0.84 color=#c96a24 smooth=true subdiv=1
+sphere bib radius=0.52 at=0,1.02,2.32 scale=0.62,1.28,1.12 color=#f6f1ea smooth=true subdiv=1
 
-skin neck_bridge path=0,0.98,2.78;0,1.42,2.88;0,1.88,2.98;0,2.20,3.04 radii=0.44;0.40;0.36;0.30 color=#d36d24
-sphere neck radius=0.46 at=0,1.56,2.96 scale=0.78,0.92,1.16 color=#d36d24
-sphere head radius=0.80 at=0,2.60,3.08 scale=0.76,1.14,0.84 color=#d97726
-loft muzzle sections=0:-0.48,-0.22;0.48,-0.22;0.34,0.14;0,0.30;-0.34,0.14|0.64:-0.34,-0.17;0.34,-0.17;0.24,0.11;0,0.22;-0.24,0.11|1.22:-0.11,-0.08;0.11,-0.08;0.08,0.05;0,0.11;-0.08,0.05 at=0,3.24,2.82 rotate=90,0,0 color=#f1e7dc
-skin snout_bridge path=0,2.95,2.88;0,3.45,2.85;0,3.92,2.82;0,4.22,2.81 radii=0.32;0.24;0.16;0.12 color=#eadfd3
-sphere chin radius=0.28 at=0,3.55,2.34 scale=0.78,1.05,0.52 color=#f7f2ea
-sphere nose radius=0.17 at=0,4.24,2.81 scale=1.60,1.10,0.90 color=#111111
+skin neck_bridge path=0,0.98,2.78;0,1.42,2.88;0,1.88,2.98;0,2.20,3.04 radii=0.44;0.40;0.36;0.30 color=#d36d24 smooth=true subdiv=1
+sphere neck radius=0.46 at=0,1.56,2.96 scale=0.78,0.92,1.16 color=#d36d24 smooth=true subdiv=1
+sphere head radius=0.80 at=0,2.60,3.08 scale=0.76,1.14,0.84 color=#d97726 smooth=true subdiv=1
+loft muzzle sections=0:-0.46,-0.20;0.46,-0.20;0.33,0.14;0,0.28;-0.33,0.14|0.68:-0.32,-0.15;0.32,-0.15;0.23,0.10;0,0.20;-0.23,0.10|1.34:-0.09,-0.07;0.09,-0.07;0.07,0.04;0,0.10;-0.07,0.04 at=0,3.18,2.84 rotate=90,0,0 color=#f1e7dc smooth=true subdiv=1
+blob snout_bridge path=0,3.00,2.86;0,3.26,2.85;0,3.50,2.84;0,3.72,2.83;0,3.90,2.82 radii=0.28;0.24;0.20;0.15;0.11 color=#eadfd3 resolution=0.11
+skin jaw_bridge path=0,3.06,2.68;0,3.24,2.67;0,3.40,2.68;0,3.56,2.73 radii=0.15;0.15;0.13;0.10 color=#f3ebe0 smooth=true subdiv=1
+sphere chin radius=0.11 at=0,3.34,2.68 scale=0.74,0.92,0.34 color=#f7f2ea smooth=true subdiv=1
+sphere nose radius=0.11 at=0,3.92,2.82 scale=1.06,0.94,0.80 color=#111111 smooth=true subdiv=1
 
 expect_intersect head muzzle
 expect_intersect muzzle snout_bridge
 expect_intersect nose snout_bridge
+expect_intersect muzzle jaw_bridge
+expect_intersect chin jaw_bridge
 expect_intersect neck_bridge head
 expect_intersect neck_bridge chest
 expect_intersect spine chest
@@ -25,14 +28,14 @@ expect_intersect torso_blend chest
 expect_intersect torso_blend hips
 
 mirror ear axis=x {
-  loft outer sections=0:-0.24,-0.10;0.24,-0.10;0.16,0.20;-0.16,0.20|0.58:-0.15,-0.02;0.15,-0.02;0.08,0.30;-0.08,0.30|1.12:-0.02,0.02;0.02,0.02;0,0.42;0,0.05 at=0.58,2.34,3.54 rotate=26,-14,22 color=#cf7126
-  loft inner sections=0:-0.12,-0.03;0.12,-0.03;0.08,0.12;-0.08,0.12|0.50:-0.08,0.01;0.08,0.01;0.05,0.20;-0.05,0.20|0.82:-0.01,0.03;0.01,0.03;0,0.24;0,0.04 at=0.58,2.40,3.62 rotate=26,-14,22 color=#f5d8c4
+  loft outer sections=0:-0.24,-0.10;0.24,-0.10;0.16,0.20;-0.16,0.20|0.58:-0.15,-0.02;0.15,-0.02;0.08,0.30;-0.08,0.30|1.12:-0.02,0.02;0.02,0.02;0,0.42;0,0.05 at=0.58,2.34,3.54 rotate=26,-14,22 color=#cf7126 smooth=true subdiv=1
+  loft inner sections=0:-0.12,-0.03;0.12,-0.03;0.08,0.12;-0.08,0.12|0.50:-0.08,0.01;0.08,0.01;0.05,0.20;-0.05,0.20|0.82:-0.01,0.03;0.01,0.03;0,0.24;0,0.04 at=0.58,2.40,3.62 rotate=26,-14,22 color=#f5d8c4 smooth=true subdiv=1
   expect_intersect outer @head
 }
 
 mirror face axis=x {
-  sphere eye radius=0.06 at=0.33,3.14,3.16 color=#101010
-  sphere cheek radius=0.17 at=0.56,3.12,2.70 scale=0.68,1.00,0.52 color=#f5eee5
+  sphere eye radius=0.05 at=0.30,3.17,3.17 color=#101010 smooth=true subdiv=1
+  sphere cheek radius=0.04 at=0.54,3.08,2.78 scale=0.70,1.00,0.44 color=#f5eee5 smooth=true subdiv=1
 }
 
 mirror front axis=x {
@@ -59,5 +62,5 @@ mirror rear axis=x {
   expect_ground paw
 }
 
-sweep tail_base profile=0,0.22;0.12,0.17;0.18,0;0.12,-0.17;0,-0.22;-0.12,-0.17;-0.18,0;-0.12,0.17 path=0,-2.18,2.50;0.12,-2.92,2.80;0.28,-3.65,3.05;0.46,-4.36,3.30 color=#d67023
-sweep tail_tip profile=0,0.15;0.08,0.11;0.12,0;0.08,-0.11;0,-0.15;-0.08,-0.11;-0.12,0;-0.08,0.11 path=0.46,-4.36,3.30;0.56,-4.90,3.48;0.64,-5.48,3.58 color=#f7f2ea
+sweep tail_base profile=0,0.22;0.12,0.17;0.18,0;0.12,-0.17;0,-0.22;-0.12,-0.17;-0.18,0;-0.12,0.17 path=0,-2.18,2.50;0.12,-2.92,2.80;0.28,-3.65,3.05;0.46,-4.36,3.30 color=#d67023 smooth=true subdiv=1
+sweep tail_tip profile=0,0.15;0.08,0.11;0.12,0;0.08,-0.11;0,-0.15;-0.08,-0.11;-0.12,0;-0.08,0.11 path=0.46,-4.36,3.30;0.56,-4.90,3.48;0.64,-5.48,3.58 color=#f7f2ea smooth=true subdiv=1

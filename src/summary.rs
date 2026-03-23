@@ -266,6 +266,8 @@ fn combine_transform(base: Transform, delta: Transform) -> Transform {
         rotation_degrees: add_vec3(base.rotation_degrees, delta.rotation_degrees),
         scale: mul_vec3(base.scale, delta.scale),
         color: delta.color.or(base.color),
+        smooth: base.smooth || delta.smooth,
+        subdiv: base.subdiv.max(delta.subdiv),
     }
 }
 
@@ -292,7 +294,7 @@ fn local_bounds_for_kind(kind: &ObjectKind) -> Bounds {
             min: Vec3(-radius, -radius, -depth * 0.5),
             max: Vec3(*radius, *radius, *depth * 0.5),
         },
-        ObjectKind::Skin { path, radii, .. } => {
+        ObjectKind::Blob { path, radii, .. } | ObjectKind::Skin { path, radii, .. } => {
             let mut min = Vec3(f64::INFINITY, f64::INFINITY, f64::INFINITY);
             let mut max = Vec3(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
             for (point, radius) in path.iter().zip(radii) {
@@ -536,6 +538,7 @@ fn object_kind_name(kind: &ObjectKind) -> &'static str {
         ObjectKind::Cube { .. } => "cube",
         ObjectKind::Cylinder { .. } => "cylinder",
         ObjectKind::Capsule { .. } => "capsule",
+        ObjectKind::Blob { .. } => "blob",
         ObjectKind::Skin { .. } => "skin",
         ObjectKind::Cone { .. } => "cone",
         ObjectKind::Torus { .. } => "torus",
@@ -555,6 +558,17 @@ fn object_detail(kind: &ObjectKind) -> String {
         }
         ObjectKind::Capsule { radius, depth } => {
             format!("radius={radius:.6} depth={depth:.6}")
+        }
+        ObjectKind::Blob {
+            path,
+            radii,
+            resolution,
+        } => {
+            format!(
+                "path_points={} radii_points={} resolution={resolution:.6}",
+                path.len(),
+                radii.len()
+            )
         }
         ObjectKind::Skin { path, radii, sides } => {
             format!(

@@ -70,6 +70,25 @@ def apply_color(obj, color):
         obj.data.materials.append(material)
 
 
+def apply_surface_options(obj, transform):
+    if obj.type != "MESH":
+        return
+
+    if transform.get("smooth"):
+        for polygon in obj.data.polygons:
+            polygon.use_smooth = True
+
+    subdiv = int(transform.get("subdiv") or 0)
+    if subdiv > 0:
+        modifier = obj.modifiers.new(name=f"{obj.name}_subdiv", type="SUBSURF")
+        modifier.levels = subdiv
+        modifier.render_levels = subdiv
+        bpy.context.view_layer.objects.active = obj
+        obj.select_set(True)
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+        obj.select_set(False)
+
+
 def build_primitive(obj_spec):
     kind = obj_spec["kind"]
     kind_type = kind["type"]
@@ -82,6 +101,8 @@ def build_primitive(obj_spec):
         bpy.ops.mesh.primitive_cylinder_add(radius=kind["radius"], depth=kind["depth"])
     elif kind_type == "capsule":
         create_capsule(obj_spec["name"], kind["radius"], kind["depth"])
+    elif kind_type == "blob":
+        create_blob(obj_spec["name"], kind["path"], kind["radii"], kind["resolution"])
     elif kind_type == "skin":
         create_skin(obj_spec["name"], kind["path"], kind["radii"], kind["sides"])
     elif kind_type == "cone":
@@ -107,6 +128,7 @@ def build_primitive(obj_spec):
     obj.name = obj_spec["name"]
     apply_transform(obj, obj_spec["transform"])
     apply_color(obj, obj_spec["transform"]["color"] or DEFAULT_COLOR)
+    apply_surface_options(obj, obj_spec["transform"])
     return obj
 
 
@@ -150,6 +172,25 @@ def create_capsule(name, radius, depth):
         piece.select_set(True)
     bpy.context.view_layer.objects.active = pieces[0]
     bpy.ops.object.join()
+    bpy.context.active_object.name = name
+
+
+def create_blob(name, path, radii, resolution):
+    metaball = bpy.data.metaballs.new(name)
+    metaball.resolution = resolution
+    metaball.render_resolution = resolution
+    obj = bpy.data.objects.new(name, metaball)
+    bpy.context.collection.objects.link(obj)
+
+    for point, radius in zip(path, radii):
+        element = metaball.elements.new(type="BALL")
+        element.co = point
+        element.radius = radius
+        element.stiffness = 2.0
+
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.convert(target="MESH")
     bpy.context.active_object.name = name
 
 
@@ -436,6 +477,7 @@ def main():
         bpy.ops.object.modifier_apply(modifier=modifier.name)
         apply_transform(result, boolean["transform"])
         apply_color(result, boolean["transform"]["color"] or DEFAULT_COLOR)
+        apply_surface_options(result, boolean["transform"])
         nodes[boolean["name"]] = result
 
     for apply in payload["applies"]:
@@ -455,6 +497,8 @@ def main():
                     apply_group_color(target, transform["color"])
                 else:
                     apply_color(target, transform["color"])
+            if target.type == "MESH":
+                apply_surface_options(target, transform)
 
     export_scene(output_path, output_format)
 
