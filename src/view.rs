@@ -69,10 +69,27 @@ const INDEX_HTML: &str = r#"<!doctype html>
       padding: 14px 16px;
       border-bottom: 1px solid var(--line);
       font-size: 14px;
-      letter-spacing: 0.02em;
-      text-transform: uppercase;
+      letter-spacing: 0.01em;
       color: var(--muted);
       background: rgba(255, 255, 255, 0.35);
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .download-link {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 12px;
+      text-decoration: none;
+      color: var(--text);
+      background: rgba(255,255,255,0.72);
+      transition: background 140ms ease, transform 140ms ease;
+    }
+    .download-link:hover {
+      background: #ffffff;
+      transform: translateY(-1px);
     }
     .viewer-wrap {
       height: calc(100vh - 84px);
@@ -83,8 +100,8 @@ const INDEX_HTML: &str = r#"<!doctype html>
       width: 100%;
       flex: 1;
       background:
-        radial-gradient(circle at 25% 20%, rgba(255,255,255,0.9), rgba(255,255,255,0) 35%),
-        linear-gradient(180deg, #e9f1ed 0%, #dce6de 100%);
+        radial-gradient(circle at 25% 20%, rgba(255,255,255,0.92), rgba(255,255,255,0) 35%),
+        linear-gradient(180deg, #d5e0d8 0%, #becdbf 100%);
     }
     .status-bar {
       border-top: 1px solid var(--line);
@@ -133,10 +150,13 @@ const INDEX_HTML: &str = r#"<!doctype html>
     <section class="panel">
       <div class="panel-header">
         <span>Preview</span>
-        <span id="renderVersion">render 0</span>
+        <div class="header-actions">
+          <a id="downloadLink" class="download-link" href="/model.glb" download="preview.glb">Download 3D</a>
+          <span id="renderVersion">render 0</span>
+        </div>
       </div>
       <div class="viewer-wrap">
-        <model-viewer id="viewer" camera-controls auto-rotate shadow-intensity="1" exposure="1.1"></model-viewer>
+        <model-viewer id="viewer" camera-controls auto-rotate shadow-intensity="1.0" shadow-softness="0.0" exposure="1.0" environment-image="neutral"></model-viewer>
         <div class="status-bar"><span id="statusDot" class="dot"></span><span id="statusText">Starting viewer...</span></div>
       </div>
     </section>
@@ -155,6 +175,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
     const statusDot = document.getElementById("statusDot");
     const renderVersion = document.getElementById("renderVersion");
     const saveText = document.getElementById("saveText");
+    const downloadLink = document.getElementById("downloadLink");
     let lastRenderVersion = -1;
     let lastSourceVersion = -1;
     let saveTimer = null;
@@ -206,7 +227,9 @@ const INDEX_HTML: &str = r#"<!doctype html>
         statusDot.className = `dot ${state.status}`;
 
         if (state.render_version !== lastRenderVersion && state.status !== "error") {
-          viewer.src = `/model.glb?v=${state.render_version}`;
+          const modelUrl = `/model.glb?v=${state.render_version}`;
+          viewer.src = modelUrl;
+          downloadLink.href = modelUrl;
           lastRenderVersion = state.render_version;
         }
 
@@ -333,7 +356,10 @@ fn start_render_worker(
     });
 }
 
-fn start_file_watcher(source_path: PathBuf, trigger: mpsc::Sender<()>) -> Result<RecommendedWatcher> {
+fn start_file_watcher(
+    source_path: PathBuf,
+    trigger: mpsc::Sender<()>,
+) -> Result<RecommendedWatcher> {
     let watched_path = source_path.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if let Ok(event) = event {
@@ -430,7 +456,8 @@ async fn update_source(State(state): State<AppState>, body: String) -> impl Into
                 let mut viewer_state = state.state.lock().unwrap();
                 viewer_state.source_version += 1;
                 viewer_state.status = "rendering";
-                viewer_state.message = format!("Saved {}, updating preview...", state.source_path.display());
+                viewer_state.message =
+                    format!("Saved {}, updating preview...", state.source_path.display());
             }
             let _ = state.trigger.send(());
             (
@@ -453,7 +480,10 @@ async fn update_source(State(state): State<AppState>, body: String) -> impl Into
 async fn get_model(State(state): State<AppState>) -> Response {
     match fs::read(&state.model_path) {
         Ok(bytes) => (
-            [(header::CONTENT_TYPE, HeaderValue::from_static("model/gltf-binary"))],
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("model/gltf-binary"),
+            )],
             bytes,
         )
             .into_response(),

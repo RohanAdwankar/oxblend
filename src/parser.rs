@@ -17,6 +17,44 @@ struct SceneParser {
     anonymous_counter: usize,
 }
 
+#[derive(Clone)]
+struct ParserContext {
+    prefix: String,
+    offset: Vec3,
+}
+
+impl ParserContext {
+    fn qualify(&self, name: impl AsRef<str>) -> String {
+        let name = name.as_ref();
+        if self.prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}{}", self.prefix, name)
+        }
+    }
+
+    fn child(&self, prefix_fragment: &str, offset: Vec3) -> Self {
+        Self {
+            prefix: format!("{}{}", self.prefix, prefix_fragment),
+            offset: add_vec3(self.offset, offset),
+        }
+    }
+}
+
+impl Default for ParserContext {
+    fn default() -> Self {
+        Self {
+            prefix: String::new(),
+            offset: Vec3::ZERO,
+        }
+    }
+}
+
+struct RepeatSpec {
+    name: String,
+    offsets: Vec<Vec3>,
+}
+
 impl SceneParser {
     fn new() -> Self {
         Self {
@@ -28,53 +66,74 @@ impl SceneParser {
         let mut scene = Scene::new();
         let lines: Vec<&str> = source.lines().collect();
         let mut index = 0usize;
+        self.parse_block(&lines, &mut index, &mut scene, &ParserContext::default())?;
+        Ok(scene)
+    }
 
-        while index < lines.len() {
-            let line_no = index + 1;
-            let line = strip_comments(lines[index]).trim();
-            index += 1;
+    fn parse_block(
+        &mut self,
+        lines: &[&str],
+        index: &mut usize,
+        scene: &mut Scene,
+        ctx: &ParserContext,
+    ) -> Result<()> {
+        while *index < lines.len() {
+            let line_no = *index + 1;
+            let line = strip_comments(lines[*index]).trim();
+            *index += 1;
             if line.is_empty() {
                 continue;
+            }
+
+            if line == "}" {
+                bail!("line {}: unexpected closing brace", line_no);
             }
 
             if line.ends_with('{') {
                 let header = line.trim_end_matches('{').trim();
                 let header_tokens = tokenize(header)
                     .with_context(|| format!("line {}: invalid block header", line_no))?;
-                if header_tokens.len() != 2 {
-                    bail!("line {}: expected '<group|transform> <name> {{'", line_no);
+                if header_tokens.is_empty() {
+                    bail!("line {}: empty block header", line_no);
                 }
 
-                let mut block_lines = Vec::new();
-                loop {
-                    if index >= lines.len() {
-                        bail!("line {}: unterminated block", line_no);
-                    }
-                    let body_line_no = index + 1;
-                    let body_line = strip_comments(lines[index]).trim();
-                    index += 1;
-                    if body_line == "}" {
-                        break;
-                    }
-                    if body_line.is_empty() {
-                        continue;
-                    }
-                    block_lines.push((body_line_no, body_line.to_string()));
-                }
+                let (body_start, body_end) = collect_block_range(lines, index, line_no)?;
+                let body = &lines[body_start..body_end];
 
                 match header_tokens[0].as_str() {
                     "group" => {
-                        scene
-                            .groups
-                            .push(parse_group_block(&header_tokens[1], &block_lines)?);
+                        if header_tokens.len() != 2 {
+                            bail!("line {}: expected 'group <name> {{'", line_no);
+                        }
+                        scene.groups.push(parse_group_block(
+                            &ctx.qualify(&header_tokens[1]),
+                            body,
+                            ctx,
+                        )?);
                     }
                     "transform" => {
-                        scene
-                            .transforms
-                            .push(parse_transform_block(&header_tokens[1], &block_lines)?);
+                        if header_tokens.len() != 2 {
+                            bail!("line {}: expected 'transform <name> {{'", line_no);
+                        }
+                        scene.transforms.push(parse_transform_block(
+                            &ctx.qualify(&header_tokens[1]),
+                            body,
+                            ctx,
+                        )?);
+                    }
+                    "repeat" => {
+                        let repeat = parse_repeat_header(line_no, &header_tokens)?;
+                        for (idx, offset) in repeat.offsets.iter().enumerate() {
+                            let child_ctx =
+                                ctx.child(&format!("{}_{}__", repeat.name, idx + 1), *offset);
+                            let mut nested_index = 0usize;
+                            self.parse_block(body, &mut nested_index, scene, &child_ctx)?;
+                        }
                     }
                     other => bail!("line {}: unsupported block '{}'", line_no, other),
                 }
+
+                *index = body_end + 1;
                 continue;
             }
 
@@ -85,32 +144,38 @@ impl SceneParser {
 
             match tokens[0].as_str() {
                 "sphere" | "cube" | "cylinder" | "cone" | "torus" | "extrude" | "revolve"
-                | "sweep" => {
-                    scene.objects.push(self.parse_object(line_no, &tokens)?);
-                }
-                "group" => scene.groups.push(parse_group_inline(line_no, &tokens)?),
-                "transform" => scene.transforms.push(parse_transform_inline(line_no, &tokens)?),
-                "apply" => scene.applies.push(parse_apply(line_no, &tokens)?),
+                | "sweep" => scene.objects.push(self.parse_object(line_no, &tokens, ctx)?),
+                "group" => scene.groups.push(parse_group_inline(line_no, &tokens, ctx)?),
+                "transform" => scene.transforms.push(parse_transform_inline(line_no, &tokens, ctx)?),
+                "apply" => scene.applies.push(parse_apply(line_no, &tokens, ctx)?),
                 "union" | "difference" | "intersection" => {
-                    scene.booleans.push(parse_boolean(line_no, &tokens)?);
+                    scene.booleans.push(parse_boolean(line_no, &tokens, ctx)?)
                 }
                 other => bail!("line {}: unknown command '{}'", line_no, other),
             }
         }
 
-        Ok(scene)
+        Ok(())
     }
 
-    fn next_generated_name(&mut self, prefix: &str) -> String {
+    fn next_generated_name(&mut self, prefix: &str, ctx: &ParserContext) -> String {
         self.anonymous_counter += 1;
-        format!("{}_{}", prefix, self.anonymous_counter)
+        ctx.qualify(format!("{}_{}", prefix, self.anonymous_counter))
     }
 
-    fn parse_object(&mut self, line_no: usize, tokens: &[String]) -> Result<ObjectSpec> {
+    fn parse_object(
+        &mut self,
+        line_no: usize,
+        tokens: &[String],
+        ctx: &ParserContext,
+    ) -> Result<ObjectSpec> {
         let command = tokens[0].as_str();
-        let (name, positional, attrs) = split_name_and_attrs(command, &tokens[1..], || {
-            self.next_generated_name(command)
+        let (mut name, positional, attrs) = split_name_and_attrs(command, &tokens[1..], || {
+            self.next_generated_name(command, ctx)
         });
+        if !ctx.prefix.is_empty() && !name.starts_with(&ctx.prefix) {
+            name = ctx.qualify(name);
+        }
 
         let (kind, consumed_positional) = match command {
             "sphere" => {
@@ -177,12 +242,14 @@ impl SceneParser {
             }
             _ => bail!("line {}: unsupported object '{}'", line_no, command),
         };
+
         let remaining = if consumed_positional >= positional.len() {
             &[][..]
         } else {
             &positional[consumed_positional..]
         };
-        let transform = parse_transform_attrs(&attrs, remaining)?;
+        let mut transform = parse_transform_attrs(&attrs, remaining)?;
+        transform.translation = add_vec3(transform.translation, ctx.offset);
 
         Ok(ObjectSpec {
             name,
@@ -190,6 +257,27 @@ impl SceneParser {
             transform,
         })
     }
+}
+
+fn collect_block_range(lines: &[&str], index: &usize, start_line: usize) -> Result<(usize, usize)> {
+    let body_start = *index;
+    let mut depth = 1usize;
+    let mut cursor = *index;
+
+    while cursor < lines.len() {
+        let line = strip_comments(lines[cursor]).trim();
+        if line.ends_with('{') {
+            depth += 1;
+        } else if line == "}" {
+            depth -= 1;
+            if depth == 0 {
+                return Ok((body_start, cursor));
+            }
+        }
+        cursor += 1;
+    }
+
+    bail!("line {}: unterminated block", start_line)
 }
 
 fn tokenize(line: &str) -> Result<Vec<String>> {
@@ -247,49 +335,111 @@ where
     (name.unwrap_or_else(default_name), positional, attrs)
 }
 
-fn parse_group_inline(line_no: usize, tokens: &[String]) -> Result<GroupSpec> {
+fn parse_repeat_header(line_no: usize, tokens: &[String]) -> Result<RepeatSpec> {
+    if tokens.len() < 2 {
+        bail!(
+            "line {}: expected 'repeat <name> count=<n> step=<x,y,z> {{' or positions=<...>'",
+            line_no
+        );
+    }
+    let name = tokens[1].clone();
+    let attrs = parse_attrs(&tokens[2..]);
+
+    if let Some(positions) = attrs.get("positions") {
+        return Ok(RepeatSpec {
+            name,
+            offsets: parse_positions(positions)?,
+        });
+    }
+
+    let count = attrs
+        .get("count")
+        .ok_or_else(|| anyhow!("line {}: repeat requires count=<n> or positions=<...>", line_no))?
+        .parse::<usize>()
+        .with_context(|| format!("line {}: invalid repeat count", line_no))?;
+    if count == 0 {
+        bail!("line {}: repeat count must be at least 1", line_no);
+    }
+    let step = attrs
+        .get("step")
+        .map(|value| parse_vec3(value))
+        .transpose()?
+        .ok_or_else(|| anyhow!("line {}: repeat count form requires step=<x,y,z>", line_no))?;
+    let start = attrs
+        .get("start")
+        .map(|value| parse_vec3(value))
+        .transpose()?
+        .unwrap_or(Vec3::ZERO);
+
+    let mut offsets = Vec::with_capacity(count);
+    for i in 0..count {
+        offsets.push(add_vec3(start, mul_vec3(step, i as f64)));
+    }
+
+    Ok(RepeatSpec { name, offsets })
+}
+
+fn parse_group_inline(line_no: usize, tokens: &[String], ctx: &ParserContext) -> Result<GroupSpec> {
     if tokens.len() < 2 {
         bail!("line {}: expected 'group <name> ...'", line_no);
     }
     let mut attrs = parse_attrs(&tokens[2..]);
-    let children = parse_children_attr(&mut attrs, line_no, "group")?;
+    let children = parse_children_attr(&mut attrs, line_no, "group")?
+        .into_iter()
+        .map(|child| ctx.qualify(child))
+        .collect();
+    let mut transform = parse_transform_attrs(&attrs, &[])?;
+    transform.translation = add_vec3(transform.translation, ctx.offset);
     Ok(GroupSpec {
-        name: tokens[1].clone(),
+        name: ctx.qualify(&tokens[1]),
         children,
-        transform: parse_transform_attrs(&attrs, &[])?,
+        transform,
     })
 }
 
-fn parse_group_block(name: &str, lines: &[(usize, String)]) -> Result<GroupSpec> {
+fn parse_group_block(name: &str, lines: &[&str], ctx: &ParserContext) -> Result<GroupSpec> {
     let mut attrs = collect_block_attrs(lines)?;
-    let children = parse_children_attr(&mut attrs, lines[0].0, "group")?;
+    let children = parse_children_attr(&mut attrs, 0, "group")?
+        .into_iter()
+        .map(|child| ctx.qualify(child))
+        .collect();
+    let mut transform = parse_transform_attrs(&attrs, &[])?;
+    transform.translation = add_vec3(transform.translation, ctx.offset);
     Ok(GroupSpec {
         name: name.to_string(),
         children,
-        transform: parse_transform_attrs(&attrs, &[])?,
+        transform,
     })
 }
 
-fn parse_transform_inline(line_no: usize, tokens: &[String]) -> Result<NamedTransform> {
+fn parse_transform_inline(
+    line_no: usize,
+    tokens: &[String],
+    ctx: &ParserContext,
+) -> Result<NamedTransform> {
     if tokens.len() < 2 {
         bail!("line {}: expected 'transform <name> ...'", line_no);
     }
     let attrs = parse_attrs(&tokens[2..]);
+    let mut transform = parse_transform_attrs(&attrs, &[])?;
+    transform.translation = add_vec3(transform.translation, ctx.offset);
     Ok(NamedTransform {
-        name: tokens[1].clone(),
-        transform: parse_transform_attrs(&attrs, &[])?,
+        name: ctx.qualify(&tokens[1]),
+        transform,
     })
 }
 
-fn parse_transform_block(name: &str, lines: &[(usize, String)]) -> Result<NamedTransform> {
+fn parse_transform_block(name: &str, lines: &[&str], ctx: &ParserContext) -> Result<NamedTransform> {
     let attrs = collect_block_attrs(lines)?;
+    let mut transform = parse_transform_attrs(&attrs, &[])?;
+    transform.translation = add_vec3(transform.translation, ctx.offset);
     Ok(NamedTransform {
         name: name.to_string(),
-        transform: parse_transform_attrs(&attrs, &[])?,
+        transform,
     })
 }
 
-fn parse_apply(line_no: usize, tokens: &[String]) -> Result<ApplySpec> {
+fn parse_apply(line_no: usize, tokens: &[String], ctx: &ParserContext) -> Result<ApplySpec> {
     if tokens.len() < 2 {
         bail!("line {}: expected 'apply <transform> to=a,b'", line_no);
     }
@@ -302,12 +452,12 @@ fn parse_apply(line_no: usize, tokens: &[String]) -> Result<ApplySpec> {
         bail!("line {}: apply requires to=<targets>", line_no);
     }
     Ok(ApplySpec {
-        transform: tokens[1].clone(),
-        targets,
+        transform: ctx.qualify(&tokens[1]),
+        targets: targets.into_iter().map(|target| ctx.qualify(target)).collect(),
     })
 }
 
-fn parse_boolean(line_no: usize, tokens: &[String]) -> Result<BooleanSpec> {
+fn parse_boolean(line_no: usize, tokens: &[String], ctx: &ParserContext) -> Result<BooleanSpec> {
     if tokens.len() < 4 {
         bail!(
             "line {}: expected '{} <name> <left> <right>'",
@@ -316,16 +466,20 @@ fn parse_boolean(line_no: usize, tokens: &[String]) -> Result<BooleanSpec> {
         );
     }
     let mut attrs = parse_attrs(&tokens[2..]);
-    let name = tokens[1].clone();
+    let name = ctx.qualify(&tokens[1]);
 
-    let left = attrs
-        .remove("left")
-        .or_else(|| attrs.remove("base"))
-        .unwrap_or_else(|| tokens[2].clone());
-    let right = attrs
-        .remove("right")
-        .or_else(|| attrs.remove("tool"))
-        .unwrap_or_else(|| tokens[3].clone());
+    let left = ctx.qualify(
+        attrs
+            .remove("left")
+            .or_else(|| attrs.remove("base"))
+            .unwrap_or_else(|| tokens[2].clone()),
+    );
+    let right = ctx.qualify(
+        attrs
+            .remove("right")
+            .or_else(|| attrs.remove("tool"))
+            .unwrap_or_else(|| tokens[3].clone()),
+    );
 
     let op = match tokens[0].as_str() {
         "union" => BooleanOp::Union,
@@ -334,23 +488,26 @@ fn parse_boolean(line_no: usize, tokens: &[String]) -> Result<BooleanSpec> {
         other => bail!("line {}: unsupported boolean op '{}'", line_no, other),
     };
 
+    let mut transform = parse_transform_attrs(&attrs, &[])?;
+    transform.translation = add_vec3(transform.translation, ctx.offset);
+
     Ok(BooleanSpec {
         name,
         op,
         left,
         right,
-        transform: parse_transform_attrs(&attrs, &[])?,
+        transform,
     })
 }
 
-fn collect_block_attrs(lines: &[(usize, String)]) -> Result<HashMap<String, String>> {
+fn collect_block_attrs(lines: &[&str]) -> Result<HashMap<String, String>> {
     let mut attrs = HashMap::new();
-    for (line_no, line) in lines {
-        for token in tokenize(line)? {
+    for (idx, line) in lines.iter().enumerate() {
+        for token in tokenize(strip_comments(line).trim())? {
             if let Some((key, value)) = token.split_once('=') {
                 attrs.insert(key.to_ascii_lowercase(), value.to_string());
             } else {
-                bail!("line {}: block entries must be key=value", line_no);
+                bail!("line {}: block entries must be key=value", idx + 1);
             }
         }
     }
@@ -467,6 +624,21 @@ fn parse_required_profile3(
         .map(|value| parse_profile3(value))
         .transpose()?
         .ok_or_else(|| anyhow!("{} requires {}=<x,y,z;...>", command, attr_name))
+}
+
+fn parse_positions(value: &str) -> Result<Vec<Vec3>> {
+    let mut points = Vec::new();
+    for triple in value.split(';') {
+        let trimmed = triple.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        points.push(parse_vec3(trimmed)?);
+    }
+    if points.is_empty() {
+        bail!("positions cannot be empty");
+    }
+    Ok(points)
 }
 
 fn parse_f64(value: &str) -> Result<f64> {
@@ -628,6 +800,14 @@ fn parse_hex_color(hex: &str) -> Result<Color> {
     }
 }
 
+fn add_vec3(left: Vec3, right: Vec3) -> Vec3 {
+    Vec3(left.0 + right.0, left.1 + right.1, left.2 + right.2)
+}
+
+fn mul_vec3(vector: Vec3, scalar: f64) -> Vec3 {
+    Vec3(vector.0 * scalar, vector.1 * scalar, vector.2 * scalar)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,6 +846,28 @@ mod tests {
         assert_eq!(scene.transforms.len(), 1);
         assert_eq!(scene.applies.len(), 1);
         assert_eq!(scene.booleans.len(), 1);
+    }
+
+    #[test]
+    fn expands_repeat_blocks() {
+        let source = r#"
+            repeat row count=2 step=0,8,0 start=0,-4,0 {
+              repeat rack count=3 step=4,0,0 start=-4,0,0 {
+                cube node size=2 at=0,0,2 scale=1,0.5,2
+              }
+            }
+        "#;
+        let scene = parse_scene(source).unwrap();
+        scene.validate().unwrap();
+        assert_eq!(scene.objects.len(), 6);
+        assert!(scene
+            .objects
+            .iter()
+            .any(|object| object.transform.translation == Vec3(-4.0, -4.0, 2.0)));
+        assert!(scene
+            .objects
+            .iter()
+            .any(|object| object.transform.translation == Vec3(4.0, 4.0, 2.0)));
     }
 
     #[test]
