@@ -25,6 +25,12 @@ Run an example:
 cargo run -- examples/datacenter.oxb -o examples/datacenter.stl
 ```
 
+Launch the live viewer:
+
+```bash
+cargo run -- view examples/datacenter.oxb
+```
+
 Oxblend should find your Blender for you if it is installed normally.
 
 Otherwise point `oxblend` at it explicitly:
@@ -88,3 +94,12 @@ So the cooperation model is:
 3. Rust starts Blender with `--background --python ...`.
 4. Blender Python creates the actual geometry and writes the final mesh file.
 
+For `oxblend view`, there is one extra layer:
+
+1. `oxblend` starts a localhost web server.
+2. The browser shows a split view with the interactive preview on the left and the source editor on the right.
+3. Edits from the browser are written back to the `.oxb` file.
+4. A file watcher triggers a fresh temporary `.glb` export through Blender.
+5. The browser reloads the preview model when the new render succeeds.
+
+The current browser preview uses `model-viewer` from a CDN, so the webview expects ordinary internet access for that frontend dependency.
