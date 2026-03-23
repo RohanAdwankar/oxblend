@@ -51,20 +51,24 @@ pub fn run_blender_export(
 
 fn resolve_blender_bin(explicit: Option<&Path>) -> Result<PathBuf> {
     if let Some(path) = explicit {
-        if path.exists() {
-            return Ok(path.to_path_buf());
+        if let Some(candidate) = normalize_blender_path(path) {
+            return Ok(candidate);
         }
         bail!("blender executable not found at {}", path.display());
     }
 
     if let Ok(path) = env::var("OXBLEND_BLENDER_BIN") {
         let candidate = PathBuf::from(path);
-        if candidate.exists() {
+        if let Some(candidate) = normalize_blender_path(&candidate) {
             return Ok(candidate);
         }
     }
 
     if let Some(path) = find_in_path("blender") {
+        return Ok(path);
+    }
+
+    if let Some(path) = find_default_blender_locations() {
         return Ok(path);
     }
 
@@ -77,10 +81,46 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
     let path_var = env::var_os("PATH")?;
     for dir in env::split_paths(&path_var) {
         let candidate = dir.join(name);
-        if candidate.exists() {
+        if let Some(candidate) = normalize_blender_path(&candidate) {
             return Some(candidate);
         }
     }
+    None
+}
+
+fn normalize_blender_path(path: &Path) -> Option<PathBuf> {
+    if path.is_file() {
+        return Some(path.to_path_buf());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if path.extension().and_then(|ext| ext.to_str()) == Some("app") {
+            let candidate = path.join("Contents/MacOS/Blender");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+fn find_default_blender_locations() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        for candidate in [
+            Path::new("/Applications/Blender.app"),
+            Path::new("/Applications/Blender.app/Contents/MacOS/Blender"),
+            Path::new("/Applications/Blender 5.2.app"),
+            Path::new("/Applications/Blender 5.2.app/Contents/MacOS/Blender"),
+        ] {
+            if let Some(path) = normalize_blender_path(candidate) {
+                return Some(path);
+            }
+        }
+    }
+
     None
 }
 
@@ -146,5 +186,17 @@ mod tests {
         .unwrap();
 
         assert_eq!(fs::read_to_string(output_path).unwrap(), "ok");
+    }
+
+    #[test]
+    fn normalizes_macos_app_bundle_path() {
+        let temp_dir = make_temp_dir().unwrap();
+        let app_path = temp_dir.join("Blender.app");
+        let binary_path = app_path.join("Contents/MacOS/Blender");
+        fs::create_dir_all(binary_path.parent().unwrap()).unwrap();
+        fs::write(&binary_path, b"").unwrap();
+
+        let resolved = normalize_blender_path(&app_path).unwrap();
+        assert_eq!(resolved, binary_path);
     }
 }

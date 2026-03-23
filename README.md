@@ -1,0 +1,90 @@
+# oxblend
+
+`oxblend` is a small declarative scene DSL for Blender-backed mesh export.
+You write a `.oxb` file with objects like spheres, cubes, booleans, groups, and a few generated shapes, then run:
+
+```bash
+oxblend scene.oxb -o thing.stl
+```
+
+## Why?
+
+Similar to how Mermaid as a diagram language has made it easier for LLMs to generate diagrams, the aim of this project is to make it easier for LLMs to generate 3D assets.
+
+## Quick Start
+
+Build the CLI:
+
+```bash
+cargo build
+```
+
+Run an example:
+
+```bash
+cargo run -- examples/datacenter.oxb -o examples/datacenter.stl
+```
+
+Oxblend should find your Blender for you if it is installed normally.
+
+Otherwise point `oxblend` at it explicitly:
+
+```bash
+cargo run -- examples/datacenter.oxb -o examples/datacenter.stl --blender-bin /Applications/Blender.app
+```
+
+You can also use:
+
+```bash
+export OXBLEND_BLENDER_BIN=/Applications/Blender.app
+```
+
+On macOS, `oxblend` accepts either the app bundle path like `/Applications/Blender.app` or the inner executable path `.../Contents/MacOS/Blender`.
+
+## DSL Example
+
+The repo includes a datacenter example made from rectangular solids:
+
+[`examples/datacenter.oxb`](/Users/rohanadwankar/oxblend/examples/datacenter.oxb)
+
+The shorthand style is intentionally compact. For example:
+
+```oxb
+sphere 1 0,0,0 red
+cube rack size=2 at=4,0,1 scale=1,0.6,2
+union combined left=rack right=other_rack
+```
+
+Supported v1 commands:
+
+- `sphere`
+- `cube`
+- `cylinder`
+- `cone`
+- `torus`
+- `extrude`
+- `revolve`
+- `sweep`
+- `group`
+- `transform`
+- `apply`
+- `union`
+- `difference`
+- `intersection`
+
+## How It Works
+
+The code is split into a small Rust front-end and a Blender Python bridge:
+
+- [`src/parser.rs`](/Users/rohanadwankar/oxblend/src/parser.rs) parses `.oxb` into a typed scene model.
+- [`src/scene.rs`](/Users/rohanadwankar/oxblend/src/scene.rs) defines objects, booleans, transforms, groups, and output formats.
+- [`src/bridge.rs`](/Users/rohanadwankar/oxblend/src/bridge.rs) locates Blender, writes a temporary JSON scene payload, writes the Python driver, and launches Blender in headless mode.
+- [`scripts/blender_driver.py`](/Users/rohanadwankar/oxblend/scripts/blender_driver.py) reconstructs the scene in Blender using `bpy`, applies transforms/material colors, runs booleans, and exports to STL/OBJ/PLY/GLB.
+
+So the cooperation model is:
+
+1. Rust parses and validates the declarative scene.
+2. Rust serializes the scene to JSON.
+3. Rust starts Blender with `--background --python ...`.
+4. Blender Python creates the actual geometry and writes the final mesh file.
+
